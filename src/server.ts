@@ -1,0 +1,68 @@
+/**
+ * server.ts
+ * 内嵌 HTTP 服务器：创建 Node.js http 服务器，处理 CORS，将请求分发到路由层
+ * 只监听 127.0.0.1，不对外暴露
+ */
+
+import * as http from 'http';
+import { route } from './router';
+
+/** 服务器实例（单例） */
+let server: http.Server | undefined;
+
+/**
+ * 启动 HTTP 服务器，监听指定端口（仅 127.0.0.1）
+ */
+export function startServer(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server = http.createServer((req, res) => {
+      // 统一添加 CORS 头，允许浏览器客户端调用
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+      // OPTIONS 预检请求直接返回 204
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      // 路由分发（异步，捕获未处理异常）
+      route(req, res).catch((err: unknown) => {
+        if (!res.headersSent) {
+          const message = err instanceof Error ? err.message : String(err);
+          const body = JSON.stringify({
+            error: { message, type: 'server_error', code: 'internal_error' },
+          });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(body);
+        }
+      });
+    });
+
+    server.listen(port, '127.0.0.1', () => {
+      resolve();
+    });
+
+    server.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
+/**
+ * 停止 HTTP 服务器
+ */
+export function stopServer(): Promise<void> {
+  return new Promise((resolve) => {
+    if (server) {
+      server.close(() => {
+        server = undefined;
+        resolve();
+      });
+    } else {
+      resolve();
+    }
+  });
+}

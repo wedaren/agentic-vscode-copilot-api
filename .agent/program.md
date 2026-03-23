@@ -16,9 +16,9 @@
 ## 系统组成
 
 - **VS Code Extension 主体**：插件激活入口，管理 HTTP 服务的启动/停止生命周期，注册命令
-- **内嵌 HTTP 服务器**：监听本地端口（默认 11434 或可配置），接受 OpenAI 兼容格式的 HTTP 请求
+- **内嵌 HTTP 服务器**：监听本地端口（默认 11435，可在 VS Code 设置中修改），接受 OpenAI 兼容格式的 HTTP 请求
 - **API 路由层**：实现 `/v1/models`、`/v1/chat/completions` 端点
-- **vscode.lm 适配层**：将 OpenAI 格式请求（messages、model、stream 等）转换为 `vscode.lm.sendChatRequest` 调用，并将响应转回 OpenAI 格式
+- **vscode.lm 适配层**：将 OpenAI 格式请求（messages、model、stream 等）转换为 `vscode.lm.selectChatModels()` + `model.sendRequest()` 调用（VS Code 1.90+ 新版 API），并将响应转回 OpenAI 格式
 
 ---
 
@@ -38,14 +38,21 @@
 - [ ] 插件可安装并激活（F5 启动扩展宿主不报错）
 - [ ] GET /v1/models 返回 vscode.lm 可用模型列表（JSON 格式符合 OpenAI 规范）
 - [ ] POST /v1/chat/completions 能转发请求到 vscode.lm 并返回 OpenAI 格式的响应
-- [ ] 支持流式响应（stream: true，Server-Sent Events 格式）
+- [ ] 支持流式响应（stream: true，SSE 格式：每块 `data: {...}\n\n`，结束发 `data: [DONE]\n\n`）
+- [ ] Copilot 未授权 / 未登录时返回 HTTP 401 + OpenAI 格式 error body，服务不崩溃
+- [ ] HTTP 响应包含 CORS 头（`Access-Control-Allow-Origin: *`），浏览器客户端可正常调用
 - [ ] npm run compile 无报错
 
 ---
 
 ## 技术选型（PM Agent 默认决策，可 [OVERRIDE]）
 
-<!-- PM Agent 会在 task_000 research 后填充这里 -->
+- **HTTP 服务器**：Node.js 内置 `http` 模块，无需引入 Express 等外部依赖，减小插件体积
+- **默认端口**：`11435`（避免与 Ollama 默认端口 11434 冲突），可通过 `copilotApi.port` 配置项修改
+- **模型名称策略**：直接透传 `vscode.lm.selectChatModels()` 返回的原始模型 ID（如 `copilot-gpt-4o`），客户端使用 GET /v1/models 获取后填入请求
+- **流式响应**：使用 `vscode.LanguageModelChatResponse` 的 `stream` 异步迭代器，逐 token 写入 SSE
+- **错误处理**：捕获 `vscode.LanguageModelError`，映射为对应 HTTP 状态码（401 未授权、429 限流、500 其他）
+- **CORS**：所有响应添加 `Access-Control-Allow-Origin: *` 等跨域头，OPTIONS 预检请求直接返回 204
 
 ---
 

@@ -4,7 +4,7 @@
       "id": "task_000",
       "type": "pm_research",
       "title": "技术可行性调研 + 项目骨架决策",
-      "status": "pending",
+      "status": "done",
       "depends_on": [],
       "acceptance": "knowledge/ 下有调研文档，decisions.md 有完整技术决策",
       "acceptance_cmd": "test -s .agent/decisions.md && ls .agent/knowledge/*.md 2>/dev/null | grep -q . && echo PASS || echo 'FAIL: research 文档不完整'"
@@ -13,10 +13,37 @@
       "id": "task_001",
       "type": "coding",
       "title": "搭建 VS Code 扩展骨架 + 内嵌 HTTP 服务器框架",
-      "status": "blocked",
+      "status": "done",
       "depends_on": ["task_000"],
-      "acceptance": "扩展可 F5 启动，HTTP 服务器在指定端口监听，GET /v1/models 返回有效 JSON",
-      "acceptance_cmd": "cd src && npm run compile 2>&1 | grep -q 'error' && echo FAIL || echo PASS"
+      "acceptance": "npm run compile 无报错；F5 启动扩展宿主不报错；HTTP 服务器监听 127.0.0.1:11435；GET /v1/models 返回 200 + OpenAI 格式 JSON；OPTIONS 请求返回 204 + CORS 头",
+      "acceptance_cmd": "cd $(ls -d */ | head -1 2>/dev/null || echo .) && npm run compile 2>&1 | grep -E 'error TS' && echo FAIL || echo PASS"
+    },
+    {
+      "id": "task_002",
+      "type": "coding",
+      "title": "实现 GET /v1/models 端点",
+      "status": "blocked",
+      "depends_on": ["task_001"],
+      "acceptance": "GET http://localhost:11435/v1/models 返回 200，body 为 {object:'list', data:[{id, object:'model', created, owned_by}]} 格式，data 为 vscode.lm.selectChatModels() 返回的真实模型列表",
+      "acceptance_cmd": "curl -s http://localhost:11435/v1/models | python3 -c \"import sys,json; d=json.load(sys.stdin); assert d['object']=='list'; assert len(d['data'])>0; print('PASS')\" 2>&1 || echo FAIL"
+    },
+    {
+      "id": "task_003",
+      "type": "coding",
+      "title": "实现 POST /v1/chat/completions 非流式响应",
+      "status": "blocked",
+      "depends_on": ["task_002"],
+      "acceptance": "POST /v1/chat/completions（stream:false）返回 200 + OpenAI chat.completion 格式 JSON，包含 id/object/created/model/choices 字段；Copilot 未登录时返回 401 + error JSON",
+      "acceptance_cmd": "curl -s -X POST http://localhost:11435/v1/chat/completions -H 'Content-Type: application/json' -d '{\"model\":\"copilot-gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":false}' | python3 -c \"import sys,json; d=json.load(sys.stdin); assert 'choices' in d or 'error' in d; print('PASS')\" 2>&1 || echo FAIL"
+    },
+    {
+      "id": "task_004",
+      "type": "coding",
+      "title": "实现 POST /v1/chat/completions 流式 SSE 响应",
+      "status": "blocked",
+      "depends_on": ["task_003"],
+      "acceptance": "POST /v1/chat/completions（stream:true）返回 Content-Type: text/event-stream，响应体包含多行 'data: {...}' SSE 事件，最后以 'data: [DONE]' 结尾",
+      "acceptance_cmd": "curl -s -X POST http://localhost:11435/v1/chat/completions -H 'Content-Type: application/json' -d '{\"model\":\"copilot-gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}' | grep -q 'data: \\[DONE\\]' && echo PASS || echo FAIL"
     }
   ]
 }

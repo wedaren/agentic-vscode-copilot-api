@@ -1,0 +1,45 @@
+{
+  "name": "copilot-api",
+  "displayName": "Copilot API",
+  "description": "通过 OpenAI 兼容接口暴露 vscode.lm 语言模型能力",
+  "version": "0.1.0",
+  "publisher": "copilot-api",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "copilotApi.start",
+        "title": "Copilot API: 启动服务器"
+      },
+      {
+        "command": "copilotApi.stop",
+        "title": "Copilot API: 停止服务器"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot API",
+      "properties": {
+        "copilotApi.port": {
+          "type": "number",
+          "default": 11435,
+          "description": "HTTP 服务监听端口（默认 11435）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.0.0"
+  }
+}
