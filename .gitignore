@@ -1,0 +1,8 @@
+.agent/experiments/
+.agent/knowledge/
+.agent/inbox/
+.agent/state.json
+node_modules/
+dist/
+out/
+*.vsix

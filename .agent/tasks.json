@@ -1,0 +1,22 @@
+{
+  "tasks": [
+    {
+      "id": "task_000",
+      "type": "pm_research",
+      "title": "技术可行性调研 + 项目骨架决策",
+      "status": "pending",
+      "depends_on": [],
+      "acceptance": "knowledge/ 下有调研文档，decisions.md 有完整技术决策",
+      "acceptance_cmd": "test -s .agent/decisions.md && ls .agent/knowledge/*.md 2>/dev/null | grep -q . && echo PASS || echo 'FAIL: research 文档不完整'"
+    },
+    {
+      "id": "task_001",
+      "type": "coding",
+      "title": "搭建 VS Code 扩展骨架 + 内嵌 HTTP 服务器框架",
+      "status": "blocked",
+      "depends_on": ["task_000"],
+      "acceptance": "扩展可 F5 启动，HTTP 服务器在指定端口监听，GET /v1/models 返回有效 JSON",
+      "acceptance_cmd": "cd src && npm run compile 2>&1 | grep -q 'error' && echo FAIL || echo PASS"
+    }
+  ]
+}
