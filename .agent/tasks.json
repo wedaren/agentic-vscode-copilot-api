@@ -117,7 +117,7 @@
       "id": "evo_006_find_available_port",
       "type": "coding",
       "title": "server.ts 中新增 findAvailablePort：自动探测可用端口（portStart ~ portStart+9）",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["evo_005_concurrency_timeout"],
       "acceptance": "server.ts 中导出 findAvailablePort(startPort, maxTries?) 函数，通过尝试监听端口（listen 成功则立即关闭并返回该端口，失败则尝试下一个）找到第一个可用端口；最多尝试 maxTries（默认 10）次；全部失败则 reject；npm run compile 无报错",
       "acceptance_cmd": "grep -q 'findAvailablePort' src/server.ts && grep -q 'export' src/server.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",

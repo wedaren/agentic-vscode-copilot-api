@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode';
-import { startServer, stopServer } from './server';
+import { startServer, stopServer, findAvailablePort } from './server';
 import { StatusTreeProvider } from './views/StatusTreeProvider';
 import { runScenario } from './scenarios';
 
@@ -16,6 +16,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const port = vscode.workspace
     .getConfiguration('copilotApi')
     .get<number>('port', 11435);
+
+  // 实际使用的端口（端口冲突时自动递增，stop 命令通过闭包引用）
+  let actualPort = port;
 
   // 创建专用 OutputChannel，用于展示场景执行结果
   const outputChannel = vscode.window.createOutputChannel('Copilot API');
@@ -29,11 +32,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(treeView);
 
   try {
-    await startServer(port);
+    // 探测可用端口（端口冲突时自动递增）
+    actualPort = await findAvailablePort(port);
+    if (actualPort !== port) {
+      vscode.window.showInformationMessage(
+        `端口 ${port} 已被占用，Copilot API 服务已自动切换到端口 ${actualPort}`
+      );
+    }
+    await startServer(actualPort);
     // 服务启动成功，更新 TreeView 状态
-    provider.update(true, port);
+    provider.update(true, actualPort);
     vscode.window.showInformationMessage(
-      `Copilot API 服务器已启动，监听 127.0.0.1:${port}`
+      `Copilot API 服务器已启动，监听 127.0.0.1:${actualPort}`
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -47,10 +57,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         .getConfiguration('copilotApi')
         .get<number>('port', 11435);
       try {
-        await startServer(cfg);
-        provider.update(true, cfg);
+        // 探测可用端口（端口冲突时自动递增）
+        const cfgActualPort = await findAvailablePort(cfg);
+        if (cfgActualPort !== cfg) {
+          vscode.window.showInformationMessage(
+            `端口 ${cfg} 已被占用，Copilot API 服务已自动切换到端口 ${cfgActualPort}`
+          );
+        }
+        await startServer(cfgActualPort);
+        // 更新闭包引用，确保 stop 命令使用最新端口
+        actualPort = cfgActualPort;
+        provider.update(true, cfgActualPort);
         vscode.window.showInformationMessage(
-          `Copilot API 服务器已启动，监听 127.0.0.1:${cfg}`
+          `Copilot API 服务器已启动，监听 127.0.0.1:${cfgActualPort}`
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -63,7 +82,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.stop', async () => {
       await stopServer();
-      provider.update(false, port);
+      // 使用 actualPort（反映实际启动端口，可能与配置端口不同）
+      provider.update(false, actualPort);
       vscode.window.showInformationMessage('Copilot API 服务器已停止');
     })
   );
