@@ -3,7 +3,7 @@
   "displayName": "Copilot API",
   "description": "通过 OpenAI 兼容接口暴露 vscode.lm 语言模型能力",
   "version": "0.1.0",
-  "publisher": "copilot-api",
+  "publisher": "wedaren",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -71,6 +71,7 @@
   "devDependencies": {
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.0.0",
     "typescript": "^5.0.0"
   }
 }
