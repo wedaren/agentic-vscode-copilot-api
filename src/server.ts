@@ -5,6 +5,7 @@
  */
 
 import * as http from 'http';
+import * as net from 'net';
 import { route } from './router';
 
 /** 服务器实例（单例） */
@@ -81,6 +82,38 @@ export function startServer(port: number): Promise<void> {
     server.on('error', (err) => {
       reject(err);
     });
+  });
+}
+
+/**
+ * 探测可用端口：从 startPort 开始，最多尝试 maxTries 次（默认 10 次）
+ * 每次尝试在 127.0.0.1:port 创建临时 TCP 服务器；监听成功则关闭并返回该端口，失败则端口 +1
+ */
+export function findAvailablePort(startPort: number, maxTries: number = 10): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let attempt = 0;
+
+    const tryPort = (port: number): void => {
+      if (attempt >= maxTries) {
+        reject(new Error('无法找到可用端口'));
+        return;
+      }
+      attempt++;
+
+      // 创建临时 TCP 服务器探测端口可用性
+      const tester = net.createServer();
+      tester.once('error', () => {
+        // 端口不可用，尝试下一个
+        tryPort(port + 1);
+      });
+      tester.once('listening', () => {
+        // 端口可用，关闭后返回
+        tester.close(() => resolve(port));
+      });
+      tester.listen(port, '127.0.0.1');
+    };
+
+    tryPort(startPort);
   });
 }
 
