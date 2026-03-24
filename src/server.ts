@@ -10,6 +10,11 @@ import { route } from './router';
 /** 服务器实例（单例） */
 let server: http.Server | undefined;
 
+/** 当前活跃请求数（并发限制用） */
+let activeRequests = 0;
+/** 最大并发请求数 */
+const MAX_CONCURRENT_REQUESTS = 10;
+
 /**
  * 启动 HTTP 服务器，监听指定端口（仅 127.0.0.1）
  */
@@ -39,6 +44,22 @@ export function startServer(port: number): Promise<void> {
         res.end();
         return;
       }
+
+      // 并发限制：超过上限返回 503
+      if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
+        const body = JSON.stringify({
+          error: { message: '服务繁忙，请稍后重试', type: 'rate_limit_error', code: 'concurrent_limit' },
+        });
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(body);
+        return;
+      }
+      activeRequests++;
+      // 防止 finish 和 close 双重减少
+      let decremented = false;
+      const decrement = () => { if (!decremented) { decremented = true; activeRequests--; } };
+      res.on('finish', decrement);
+      res.on('close', () => { if (!res.writableEnded) { decrement(); } });
 
       // 路由分发（异步，捕获未处理异常）
       route(req, res).catch((err: unknown) => {

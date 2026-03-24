@@ -139,6 +139,14 @@ export async function handleChat(
     }
   });
 
+  // 30 秒超时保护
+  const TIMEOUT_MS = 30_000;
+  let isTimeout = false;
+  const timeoutHandle = setTimeout(() => {
+    isTimeout = true;
+    cancellation.cancel();
+  }, TIMEOUT_MS);
+
   if (stream) {
     // 流式 SSE 响应
     res.writeHead(200, {
@@ -185,12 +193,19 @@ export async function handleChat(
       res.write('data: [DONE]\n\n');
       res.end();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const errorChunk = { error: { message } };
-      res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+      if (isTimeout) {
+        // 超时情况：写入超时错误 chunk
+        const errorChunk = { error: { message: '请求超时（30s）', type: 'timeout_error', code: 'timeout' } };
+        res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        const errorChunk = { error: { message } };
+        res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
+      }
       res.write('data: [DONE]\n\n');
       res.end();
     } finally {
+      clearTimeout(timeoutHandle);
       cancellation.dispose();
     }
   } else {
@@ -223,10 +238,16 @@ export async function handleChat(
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(body);
     } catch (err) {
-      const { status, type, code } = mapErrorToStatus(err);
-      const message = err instanceof Error ? err.message : String(err);
-      sendError(res, status, message, type, code);
+      if (isTimeout) {
+        // 超时情况：返回 504
+        sendError(res, 504, '请求超时（30s）', 'timeout_error', 'timeout');
+      } else {
+        const { status, type, code } = mapErrorToStatus(err);
+        const message = err instanceof Error ? err.message : String(err);
+        sendError(res, status, message, type, code);
+      }
     } finally {
+      clearTimeout(timeoutHandle);
       cancellation.dispose();
     }
   }
