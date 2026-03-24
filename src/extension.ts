@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { startServer, stopServer, findAvailablePort } from './server';
+import { setLocalPort } from './router';
 import { StatusTreeProvider } from './views/StatusTreeProvider';
 import { runScenario } from './scenarios';
 
@@ -40,6 +41,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
     }
     await startServer(actualPort);
+    // 将实际端口注入路由层，防止 round-robin 代理到自身造成死循环
+    setLocalPort(actualPort);
     // 服务启动成功，更新 TreeView 状态
     provider.update(true, actualPort);
     vscode.window.showInformationMessage(
@@ -65,6 +68,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           );
         }
         await startServer(cfgActualPort);
+        // 将实际端口注入路由层，防止 round-robin 代理到自身造成死循环
+        setLocalPort(cfgActualPort);
         // 更新闭包引用，确保 stop 命令使用最新端口
         actualPort = cfgActualPort;
         provider.update(true, cfgActualPort);

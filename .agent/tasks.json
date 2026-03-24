@@ -137,7 +137,7 @@
       "id": "evo_008_proxy_registry_handler",
       "type": "coding",
       "title": "新建 src/handlers/proxy.ts：内存后端注册表 + /internal/register 和 /internal/unregister 端点",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["evo_007_multi_workspace_activate"],
       "acceptance": "src/handlers/proxy.ts 导出 handleRegister、handleUnregister、getBackends、pickBackend、registerLocal、unregisterLocal；注册表以 Map<port, {workspace, registeredAt}> 存储；router.ts 挂载 POST /internal/register 和 POST /internal/unregister 路由；npm run compile 无报错",
       "acceptance_cmd": "test -f src/handlers/proxy.ts && grep -q 'handleRegister' src/handlers/proxy.ts && grep -q '/internal/register' src/router.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
