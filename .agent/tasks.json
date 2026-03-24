@@ -105,7 +105,7 @@
       "id": "evo_005_concurrency_timeout",
       "type": "coding",
       "title": "并发连接数限制（最多 10 个并发请求）+ 每请求 30s 超时保护",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "evo_004_disconnect_cancel"
       ],
