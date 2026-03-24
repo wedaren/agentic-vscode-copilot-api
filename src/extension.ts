@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { startServer, stopServer } from './server';
 import { StatusTreeProvider } from './views/StatusTreeProvider';
+import { runScenario } from './scenarios';
 
 /**
  * 插件激活入口（onStartupFinished 触发）
@@ -15,6 +16,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const port = vscode.workspace
     .getConfiguration('copilotApi')
     .get<number>('port', 11435);
+
+  // 创建专用 OutputChannel，用于展示场景执行结果
+  const outputChannel = vscode.window.createOutputChannel('Copilot API');
+  context.subscriptions.push(outputChannel);
 
   // 创建 TreeView 数据提供者并注册侧边栏视图
   const provider = new StatusTreeProvider();
@@ -63,13 +68,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // 注册场景执行命令（Placeholder：后续迭代实现真实请求）
+  // 注册场景执行命令：向本地 HTTP 服务发送真实请求并将结果输出到 OutputChannel
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'copilotApi.runScenario',
-      (item: import('./views/StatusTreeProvider').StatusTreeItem) => {
-        const id = item?.scenarioId ?? String(item);
-        vscode.window.showInformationMessage(`即将执行场景: ${id}`);
+      async (item: import('./views/StatusTreeProvider').StatusTreeItem) => {
+        const scenarioId = item?.scenarioId ?? String(item);
+        // 实时读取配置端口，避免使用闭包捕获的旧值
+        const currentPort = vscode.workspace
+          .getConfiguration('copilotApi')
+          .get<number>('port', 11435);
+        // 展示 OutputChannel（不抢夺编辑器焦点）
+        outputChannel.show(true);
+        await runScenario(scenarioId, currentPort, outputChannel);
       }
     )
   );

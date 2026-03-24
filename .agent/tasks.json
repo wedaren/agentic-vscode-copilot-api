@@ -69,7 +69,7 @@
       "id": "evo_002_scenario_nodes",
       "type": "coding",
       "title": "TreeView 场景节点列表 + 播放 icon（contextValue + contributes.menus）",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "evo_001_treeview_provider"
       ],
@@ -81,7 +81,7 @@
       "id": "evo_003_run_scenario",
       "type": "coding",
       "title": "执行场景命令：向本地 HTTP 服务发送测试请求并在 OutputChannel 展示结果",
-      "status": "blocked",
+      "status": "pending",
       "depends_on": [
         "evo_002_scenario_nodes"
       ],
