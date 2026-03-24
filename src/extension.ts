@@ -62,6 +62,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.window.showInformationMessage('Copilot API 服务器已停止');
     })
   );
+
+  // 注册场景执行命令（Placeholder：后续迭代实现真实请求）
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'copilotApi.runScenario',
+      (item: import('./views/StatusTreeProvider').StatusTreeItem) => {
+        const id = item?.scenarioId ?? String(item);
+        vscode.window.showInformationMessage(`即将执行场景: ${id}`);
+      }
+    )
+  );
 }
 
 /**

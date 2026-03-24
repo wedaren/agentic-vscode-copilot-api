@@ -1,21 +1,33 @@
 /**
  * StatusTreeProvider.ts
- * VS Code Activity Bar 侧边栏 TreeView：展示 Copilot API 服务器运行状态（运行中/已停止/端口信息）
+ * VS Code Activity Bar 侧边栏 TreeView：展示 Copilot API 服务器运行状态（运行中/已停止/端口信息）及模拟场景列表
  */
 
 import * as vscode from 'vscode';
 
 /** 树节点类型标识 */
-type NodeKind = 'root' | 'detail';
+type NodeKind = 'root' | 'detail' | 'scenario-group' | 'scenario';
+
+/** 内置模拟场景定义 */
+const SCENARIOS = [
+  { id: 'list-models',    label: '获取模型列表',  description: 'GET /v1/models' },
+  { id: 'chat-nonstream', label: '非流式对话',    description: 'POST /v1/chat/completions (stream:false)' },
+  { id: 'chat-stream',    label: '流式对话',      description: 'POST /v1/chat/completions (stream:true)' },
+];
 
 /** 单个树节点 */
 export class StatusTreeItem extends vscode.TreeItem {
+  /** 场景 ID（仅 kind === 'scenario' 时有值） */
+  public readonly scenarioId?: string;
+
   constructor(
     label: string,
     collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly kind: NodeKind
+    public readonly kind: NodeKind,
+    scenarioId?: string
   ) {
     super(label, collapsibleState);
+    this.scenarioId = scenarioId;
   }
 }
 
@@ -51,15 +63,22 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
 
   getChildren(element?: StatusTreeItem): StatusTreeItem[] {
     if (!element) {
-      // 返回根节点：服务状态（运行中用实心圆，已停止用空心圆）
-      const label = this._isRunning ? '● 服务状态' : '○ 服务状态';
-      const root = new StatusTreeItem(
-        label,
+      // 顶层：服务状态根节点 + 模拟场景根节点（并列）
+      const statusLabel = this._isRunning ? '● 服务状态' : '○ 服务状态';
+      const statusRoot = new StatusTreeItem(
+        statusLabel,
         vscode.TreeItemCollapsibleState.Expanded,
         'root'
       );
-      root.description = this._isRunning ? '运行中' : '已停止';
-      return [root];
+      statusRoot.description = this._isRunning ? '运行中' : '已停止';
+
+      const scenarioGroup = new StatusTreeItem(
+        '模拟场景',
+        vscode.TreeItemCollapsibleState.Expanded,
+        'scenario-group'
+      );
+
+      return [statusRoot, scenarioGroup];
     }
 
     if (element.kind === 'root') {
@@ -81,6 +100,30 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
           'detail'
         ),
       ];
+    }
+
+    if (element.kind === 'scenario-group') {
+      // 子节点：各模拟场景
+      return SCENARIOS.map((s) => {
+        const item = new StatusTreeItem(
+          s.label,
+          vscode.TreeItemCollapsibleState.None,
+          'scenario',
+          s.id
+        );
+        item.description = s.description;
+        // 场景节点的 contextValue 用于 menus when 表达式匹配
+        item.contextValue = 'scenario';
+        // 播放图标
+        item.iconPath = new vscode.ThemeIcon('play-circle');
+        // 点击节点时执行 runScenario 命令，传入 item 本身
+        item.command = {
+          command: 'copilotApi.runScenario',
+          title: '执行场景',
+          arguments: [item],
+        };
+        return item;
+      });
     }
 
     return [];

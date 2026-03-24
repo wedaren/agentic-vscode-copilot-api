@@ -36,8 +36,22 @@
       {
         "command": "copilotApi.stop",
         "title": "Copilot API: 停止服务器"
+      },
+      {
+        "command": "copilotApi.runScenario",
+        "title": "Copilot API: 执行场景",
+        "icon": "$(play)"
       }
     ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "copilotApi.runScenario",
+          "when": "viewItem == scenario",
+          "group": "inline"
+        }
+      ]
+    },
     "configuration": {
       "title": "Copilot API",
       "properties": {

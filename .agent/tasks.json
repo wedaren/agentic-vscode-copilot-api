@@ -57,8 +57,10 @@
       "id": "evo_001_treeview_provider",
       "type": "coding",
       "title": "注册 TreeView + StatusTreeProvider（展示服务状态：运行中/已停止/端口）",
-      "status": "pending",
-      "depends_on": ["task_004"],
+      "status": "done",
+      "depends_on": [
+        "task_004"
+      ],
       "acceptance": "package.json 中新增 viewsContainers 和 views 贡献点；src/views/StatusTreeProvider.ts 实现 vscode.TreeDataProvider；extension.ts 中注册 TreeView；npm run compile 无报错",
       "acceptance_cmd": "grep -q 'TreeDataProvider' src/views/StatusTreeProvider.ts && grep -q '\"views\"' package.json && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
       "evolution_goal": "希望有个 vscode treeview 视图，点击播放 icon 执行，视图下面一系列模拟场景执行，方便用户理解服务状态"
@@ -67,8 +69,10 @@
       "id": "evo_002_scenario_nodes",
       "type": "coding",
       "title": "TreeView 场景节点列表 + 播放 icon（contextValue + contributes.menus）",
-      "status": "blocked",
-      "depends_on": ["evo_001_treeview_provider"],
+      "status": "pending",
+      "depends_on": [
+        "evo_001_treeview_provider"
+      ],
       "acceptance": "场景节点设置 contextValue；package.json 中 contributes.menus 绑定 copilotApi.runScenario 命令到播放 icon；命令在 contributes.commands 中注册",
       "acceptance_cmd": "grep -q 'contextValue' src/views/StatusTreeProvider.ts && grep -q 'copilotApi.runScenario' package.json && echo PASS || echo FAIL",
       "evolution_goal": "希望有个 vscode treeview 视图，点击播放 icon 执行，视图下面一系列模拟场景执行，方便用户理解服务状态"
@@ -78,7 +82,9 @@
       "type": "coding",
       "title": "执行场景命令：向本地 HTTP 服务发送测试请求并在 OutputChannel 展示结果",
       "status": "blocked",
-      "depends_on": ["evo_002_scenario_nodes"],
+      "depends_on": [
+        "evo_002_scenario_nodes"
+      ],
       "acceptance": "copilotApi.runScenario 命令实现向 127.0.0.1:port 发送对应场景的 HTTP 请求；结果（状态码、响应摘要、耗时）输出到专用 OutputChannel；npm run compile 无报错",
       "acceptance_cmd": "grep -rq 'OutputChannel' src/ && grep -rq 'runScenario' src/ && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
       "evolution_goal": "希望有个 vscode treeview 视图，点击播放 icon 执行，视图下面一系列模拟场景执行，方便用户理解服务状态"
