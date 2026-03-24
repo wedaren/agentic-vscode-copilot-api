@@ -4,10 +4,63 @@
  */
 
 import * as vscode from 'vscode';
+import * as http from 'http';
 import { startServer, stopServer, findAvailablePort } from './server';
 import { setLocalPort } from './router';
+import { registerLocal, unregisterLocal } from './handlers/proxy';
 import { StatusTreeProvider } from './views/StatusTreeProvider';
 import { runScenario } from './scenarios';
+
+/** 当前活跃端口（deactivate 时需要引用） */
+let _activePort = 0;
+/** 配置的基础端口（用于判断是否为主实例） */
+let _configuredPort = 11435;
+
+/**
+ * 向主实例注册当前服务（非主实例调用）
+ * 失败时静默忽略，不阻塞主流程
+ */
+function registerToMaster(port: number, workspace: string): void {
+  const body = JSON.stringify({ port, workspace });
+  const req = http.request(
+    {
+      hostname: '127.0.0.1',
+      port: 11435,
+      path: '/internal/register',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    },
+    (res) => { res.resume(); }
+  );
+  req.on('error', () => { /* 静默处理：主实例未启动等情况 */ });
+  req.end(body);
+}
+
+/**
+ * 向主实例注销当前服务（非主实例调用）
+ * 失败时静默忽略，不阻塞主流程
+ */
+function unregisterFromMaster(port: number): void {
+  const body = JSON.stringify({ port });
+  const req = http.request(
+    {
+      hostname: '127.0.0.1',
+      port: 11435,
+      path: '/internal/unregister',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    },
+    (res) => { res.resume(); }
+  );
+  req.on('error', () => { /* 静默处理 */ });
+  req.end(body);
+}
 
 /**
  * 插件激活入口（onStartupFinished 触发）
@@ -43,6 +96,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await startServer(actualPort);
     // 将实际端口注入路由层，防止 round-robin 代理到自身造成死循环
     setLocalPort(actualPort);
+    // 记录活跃端口（deactivate/stop 时需要用到）
+    _activePort = actualPort;
+    _configuredPort = port;
+    // 注册到注册表：主实例直接写内存，非主实例 HTTP POST 到主实例
+    const workspaceName = vscode.workspace.name ?? 'unknown';
+    if (actualPort === port) {
+      registerLocal(actualPort, workspaceName);
+    } else {
+      registerToMaster(actualPort, workspaceName);
+    }
     // 服务启动成功，更新 TreeView 状态
     provider.update(true, actualPort);
     vscode.window.showInformationMessage(
@@ -72,6 +135,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         setLocalPort(cfgActualPort);
         // 更新闭包引用，确保 stop 命令使用最新端口
         actualPort = cfgActualPort;
+        // 记录活跃端口并注册到注册表
+        _activePort = cfgActualPort;
+        _configuredPort = cfg;
+        const startCmdWorkspace = vscode.workspace.name ?? 'unknown';
+        if (cfgActualPort === cfg) {
+          registerLocal(cfgActualPort, startCmdWorkspace);
+        } else {
+          registerToMaster(cfgActualPort, startCmdWorkspace);
+        }
         provider.update(true, cfgActualPort);
         vscode.window.showInformationMessage(
           `Copilot API 服务器已启动，监听 127.0.0.1:${cfgActualPort}`
@@ -86,6 +158,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 注册停止命令
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.stop', async () => {
+      // 停止前先注销（主实例直接写内存，非主实例 POST 到主实例）
+      if (_activePort > 0) {
+        if (_activePort === _configuredPort) {
+          unregisterLocal(_activePort);
+        } else {
+          unregisterFromMaster(_activePort);
+        }
+        _activePort = 0;
+      }
       await stopServer();
       // 使用 actualPort（反映实际启动端口，可能与配置端口不同）
       provider.update(false, actualPort);
@@ -112,8 +193,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 /**
- * 插件停用时停止服务器
+ * 插件停用时注销并停止服务器
  */
 export async function deactivate(): Promise<void> {
+  // fire-and-forget：注销不阻塞停用流程
+  if (_activePort > 0) {
+    if (_activePort === _configuredPort) {
+      unregisterLocal(_activePort);
+    } else {
+      unregisterFromMaster(_activePort);
+    }
+    _activePort = 0;
+  }
   await stopServer();
 }
