@@ -1,0 +1,62 @@
+name: 自动发布 VSCode 插件
+
+on:
+  push:
+    branches:
+      - master
+
+# 允许工作流写入仓库（用于推送版本 commit）
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: 升级版本并发布到市场
+    runs-on: ubuntu-latest
+
+    # 跳过版本 commit 本身触发的运行，避免无限循环
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # 使用 PAT 或默认 token 推送版本 commit 回 main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: 配置 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 配置 Git 用户（用于 npm version 提交）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 自动升级 patch 版本号
+        # npm version patch 会修改 package.json 并创建一个 git commit + tag
+        # [skip ci] 防止这次提交再次触发本工作流
+        run: |
+          npm version patch -m "chore: bump version to %s [skip ci]"
+
+      - name: 推送版本 commit 和 tag 到远程
+        run: git push origin master --follow-tags
+
+      - name: 安装 vsce（VSCode 插件发布工具）
+        run: npm install -g @vscode/vsce
+
+      - name: 打包 .vsix 文件
+        run: vsce package
+
+      - name: 发布到 VSCode 市场
+        run: vsce publish
+        env:
+          # 在仓库 Settings → Secrets → Actions 中添加 VSCE_PAT
+          # 获取方式见 README 说明
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
