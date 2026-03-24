@@ -81,13 +81,37 @@
       "id": "evo_003_run_scenario",
       "type": "coding",
       "title": "执行场景命令：向本地 HTTP 服务发送测试请求并在 OutputChannel 展示结果",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "evo_002_scenario_nodes"
       ],
       "acceptance": "copilotApi.runScenario 命令实现向 127.0.0.1:port 发送对应场景的 HTTP 请求；结果（状态码、响应摘要、耗时）输出到专用 OutputChannel；npm run compile 无报错",
       "acceptance_cmd": "grep -rq 'OutputChannel' src/ && grep -rq 'runScenario' src/ && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
       "evolution_goal": "希望有个 vscode treeview 视图，点击播放 icon 执行，视图下面一系列模拟场景执行，方便用户理解服务状态"
+    },
+    {
+      "id": "evo_004_disconnect_cancel",
+      "type": "coding",
+      "title": "客户端断开时取消 vscode.lm 请求 + 全局 unhandledRejection/uncaughtException 防崩溃保护",
+      "status": "done",
+      "depends_on": [
+        "evo_003_run_scenario"
+      ],
+      "acceptance": "chat.ts 中监听 req 的 close 事件并调用 cancellation.cancel()，防止客户端断开后继续占用 vscode.lm 资源；server.ts 或 extension.ts 中注册 process.on('unhandledRejection') 和 process.on('uncaughtException')，保证服务不因未捕获异常崩溃；npm run compile 无报错",
+      "acceptance_cmd": "grep -q 'req.on.*close' src/handlers/chat.ts && grep -q 'unhandledRejection\\|uncaughtException' src/server.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "提供的接口服务希望能稳定，能解决多个客户同时请求的场景"
+    },
+    {
+      "id": "evo_005_concurrency_timeout",
+      "type": "coding",
+      "title": "并发连接数限制（最多 10 个并发请求）+ 每请求 30s 超时保护",
+      "status": "pending",
+      "depends_on": [
+        "evo_004_disconnect_cancel"
+      ],
+      "acceptance": "server.ts 中维护活跃请求计数器，超过上限时返回 503；chat.ts 中对 sendRequest 设置 30s 超时定时器，超时后调用 cancellation.cancel() 并返回 504；npm run compile 无报错",
+      "acceptance_cmd": "grep -q 'activeRequests\\|activeCount\\|concurrent' src/server.ts && grep -q 'setTimeout\\|30.*1000\\|timeout' src/handlers/chat.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "提供的接口服务希望能稳定，能解决多个客户同时请求的场景"
     }
   ]
 }

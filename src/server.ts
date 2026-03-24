@@ -14,6 +14,18 @@ let server: http.Server | undefined;
  * 启动 HTTP 服务器，监听指定端口（仅 127.0.0.1）
  */
 export function startServer(port: number): Promise<void> {
+  // 防止未捕获的 Promise rejection 导致 Extension Host 崩溃
+  // 使用标志位确保只注册一次，避免重复注册
+  if (!(process as NodeJS.Process & { _copilotApiHandlersRegistered?: boolean })._copilotApiHandlersRegistered) {
+    (process as NodeJS.Process & { _copilotApiHandlersRegistered?: boolean })._copilotApiHandlersRegistered = true;
+    process.on('unhandledRejection', (reason) => {
+      console.error('[Copilot API] 未处理的 Promise rejection:', reason);
+    });
+    process.on('uncaughtException', (err) => {
+      console.error('[Copilot API] 未捕获的异常:', err);
+    });
+  }
+
   return new Promise((resolve, reject) => {
     server = http.createServer((req, res) => {
       // 统一添加 CORS 头，允许浏览器客户端调用

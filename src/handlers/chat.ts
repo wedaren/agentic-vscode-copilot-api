@@ -132,6 +132,13 @@ export async function handleChat(
   const completionId = `chatcmpl-${Date.now()}`;
   const created = Math.floor(Date.now() / 1000);
 
+  // 客户端断开连接时取消 vscode.lm 请求，释放资源
+  req.on('close', () => {
+    if (!res.writableEnded) {
+      cancellation.cancel();
+    }
+  });
+
   if (stream) {
     // 流式 SSE 响应
     res.writeHead(200, {
