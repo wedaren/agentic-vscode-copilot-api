@@ -6,6 +6,7 @@
 import * as http from 'http';
 import { handleModels } from './handlers/models';
 import { handleChat } from './handlers/chat';
+import { handleRegister, handleUnregister } from './handlers/proxy';
 
 /**
  * 路由分发：将请求转发到对应的 handler
@@ -27,6 +28,18 @@ export async function route(
   // POST /v1/chat/completions
   if (method === 'POST' && url === '/v1/chat/completions') {
     await handleChat(req, res);
+    return;
+  }
+
+  // POST /internal/register — 注册后端实例
+  if (method === 'POST' && url === '/internal/register') {
+    await handleRegister(req, res);
+    return;
+  }
+
+  // POST /internal/unregister — 注销后端实例
+  if (method === 'POST' && url === '/internal/unregister') {
+    await handleUnregister(req, res);
     return;
   }
 

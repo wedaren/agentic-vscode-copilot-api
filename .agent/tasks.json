@@ -98,7 +98,7 @@
         "evo_003_run_scenario"
       ],
       "acceptance": "chat.ts 中监听 req 的 close 事件并调用 cancellation.cancel()，防止客户端断开后继续占用 vscode.lm 资源；server.ts 或 extension.ts 中注册 process.on('unhandledRejection') 和 process.on('uncaughtException')，保证服务不因未捕获异常崩溃；npm run compile 无报错",
-      "acceptance_cmd": "grep -q 'req.on.*close' src/handlers/chat.ts && grep -q 'unhandledRejection\\|uncaughtException' src/server.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "acceptance_cmd": "grep -q 'req.on.*close' src/handlers/chat.ts && grep -qE 'unhandledRejection|uncaughtException' src/server.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
       "evolution_goal": "提供的接口服务希望能稳定，能解决多个客户同时请求的场景"
     },
     {
@@ -110,7 +110,7 @@
         "evo_004_disconnect_cancel"
       ],
       "acceptance": "server.ts 中维护活跃请求计数器，超过上限时返回 503；chat.ts 中对 sendRequest 设置 30s 超时定时器，超时后调用 cancellation.cancel() 并返回 504；npm run compile 无报错",
-      "acceptance_cmd": "grep -q 'activeRequests\\|activeCount\\|concurrent' src/server.ts && grep -q 'setTimeout\\|30.*1000\\|timeout' src/handlers/chat.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "acceptance_cmd": "grep -qE 'activeRequests|activeCount|concurrent' src/server.ts && grep -qE 'setTimeout|30.*1000|timeout' src/handlers/chat.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
       "evolution_goal": "提供的接口服务希望能稳定，能解决多个客户同时请求的场景"
     },
     {
@@ -127,11 +127,41 @@
       "id": "evo_007_multi_workspace_activate",
       "type": "coding",
       "title": "extension.ts 使用 findAvailablePort：端口冲突时自动递增并通知用户实际端口",
-      "status": "pending",
+      "status": "done",
       "depends_on": ["evo_006_find_available_port"],
       "acceptance": "extension.ts activate() 先调用 findAvailablePort 获得实际可用端口再启动服务器；若实际端口与配置端口不同，showInformationMessage 提示 '端口 <配置端口> 已被占用，已自动切换到端口 <实际端口>'；provider.update() 和 copilotApi.start 命令均使用实际端口；npm run compile 无报错",
-      "acceptance_cmd": "grep -q 'findAvailablePort' src/extension.ts && grep -q '已被占用\|actualPort\|availablePort' src/extension.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "acceptance_cmd": "grep -q 'findAvailablePort' src/extension.ts && grep -qE '已被占用|actualPort|availablePort' src/extension.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
       "evolution_goal": "用户可能同时打开多个 workspace，都有该插件，会不会有问题"
+    },
+    {
+      "id": "evo_008_proxy_registry_handler",
+      "type": "coding",
+      "title": "新建 src/handlers/proxy.ts：内存后端注册表 + /internal/register 和 /internal/unregister 端点",
+      "status": "pending",
+      "depends_on": ["evo_007_multi_workspace_activate"],
+      "acceptance": "src/handlers/proxy.ts 导出 handleRegister、handleUnregister、getBackends、pickBackend、registerLocal、unregisterLocal；注册表以 Map<port, {workspace, registeredAt}> 存储；router.ts 挂载 POST /internal/register 和 POST /internal/unregister 路由；npm run compile 无报错",
+      "acceptance_cmd": "test -f src/handlers/proxy.ts && grep -q 'handleRegister' src/handlers/proxy.ts && grep -q '/internal/register' src/router.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "用户打开多个 workspace，确保只有一个端口 11435 路由到不同实例"
+    },
+    {
+      "id": "evo_009_primary_proxy_forward",
+      "type": "coding",
+      "title": "router.ts 主路由增加代理转发：注册表非空时 round-robin 选后端并 HTTP 代理请求（支持流式）",
+      "status": "pending",
+      "depends_on": ["evo_008_proxy_registry_handler"],
+      "acceptance": "router.ts 在处理 /v1/chat/completions 和 /v1/models 前检查 pickBackend()；有可用后端时将请求（含 headers、body）完整代理到选出的后端端口；代理目标不可达时从注册表移除并回退下一个或本地处理；支持流式响应透传（pipe）；npm run compile 无报错",
+      "acceptance_cmd": "grep -qE 'pickBackend|proxyToBackend|proxy' src/router.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "用户打开多个 workspace，确保只有一个端口 11435 路由到不同实例"
+    },
+    {
+      "id": "evo_010_extension_register_lifecycle",
+      "type": "coding",
+      "title": "extension.ts 启动时注册到主实例，停止/deactivate 时注销",
+      "status": "pending",
+      "depends_on": ["evo_009_primary_proxy_forward"],
+      "acceptance": "主实例（actualPort===11435）启动后调用 registerLocal(11435, workspaceName) 将自身加入注册表；非主实例启动后 POST http://127.0.0.1:11435/internal/register 注册；deactivate() 及 copilotApi.stop 命令均触发 POST /internal/unregister 注销（主实例调用 unregisterLocal）；注册/注销失败不阻塞主流程；npm run compile 无报错",
+      "acceptance_cmd": "grep -qE '/internal/register|registerLocal' src/extension.ts && grep -qE '/internal/unregister|unregisterLocal' src/extension.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "用户打开多个 workspace，确保只有一个端口 11435 路由到不同实例"
     }
   ]
 }
