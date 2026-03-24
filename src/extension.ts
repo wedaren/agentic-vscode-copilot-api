@@ -5,6 +5,7 @@
 
 import * as vscode from 'vscode';
 import { startServer, stopServer } from './server';
+import { StatusTreeProvider } from './views/StatusTreeProvider';
 
 /**
  * 插件激活入口（onStartupFinished 触发）
@@ -15,8 +16,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     .getConfiguration('copilotApi')
     .get<number>('port', 11435);
 
+  // 创建 TreeView 数据提供者并注册侧边栏视图
+  const provider = new StatusTreeProvider();
+  const treeView = vscode.window.createTreeView('copilotApi.statusView', {
+    treeDataProvider: provider,
+  });
+  context.subscriptions.push(treeView);
+
   try {
     await startServer(port);
+    // 服务启动成功，更新 TreeView 状态
+    provider.update(true, port);
     vscode.window.showInformationMessage(
       `Copilot API 服务器已启动，监听 127.0.0.1:${port}`
     );
@@ -33,6 +43,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         .get<number>('port', 11435);
       try {
         await startServer(cfg);
+        provider.update(true, cfg);
         vscode.window.showInformationMessage(
           `Copilot API 服务器已启动，监听 127.0.0.1:${cfg}`
         );
@@ -47,6 +58,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.stop', async () => {
       await stopServer();
+      provider.update(false, port);
       vscode.window.showInformationMessage('Copilot API 服务器已停止');
     })
   );

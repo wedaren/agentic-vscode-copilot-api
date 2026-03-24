@@ -11,6 +11,23 @@
   "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "copilot-api-sidebar",
+          "title": "Copilot API",
+          "icon": "$(plug)"
+        }
+      ]
+    },
+    "views": {
+      "copilot-api-sidebar": [
+        {
+          "id": "copilotApi.statusView",
+          "name": "服务状态"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "copilotApi.start",
