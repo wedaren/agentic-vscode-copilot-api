@@ -190,7 +190,7 @@
       "id": "evo_013_runtime_validation",
       "type": "coding",
       "title": "在 VS Code 中 F5 启动并验证扩展在新 engine 下工作",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "evo_012_upgrade_devdeps_and_fix"
       ],
