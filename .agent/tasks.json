@@ -163,5 +163,40 @@
       "acceptance_cmd": "grep -qE '/internal/register|registerLocal' src/extension.ts && grep -qE '/internal/unregister|unregisterLocal' src/extension.ts && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
       "evolution_goal": "用户打开多个 workspace，确保只有一个端口 11435 路由到不同实例"
     }
+    },
+    {
+      "id": "evo_011_bump_vscode_engine",
+      "type": "coding",
+      "title": "升级 package.json 中的 engines.vscode 到最新稳定版本",
+      "status": "done",
+      "depends_on": [],
+      "acceptance": "package.json 中 engines.vscode 已更新为最新稳定版本；npm run compile 无报错",
+      "acceptance_cmd": "grep -q '\"engines\"' package.json && grep -q 'vscode' package.json && npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "确保插件声明的 VS Code engine 与当前 API 使用兼容"
+    },
+    {
+      "id": "evo_012_upgrade_devdeps_and_fix",
+      "type": "coding",
+      "title": "升级 TypeScript / @types / devDependencies 并修复编译错误（若有）",
+      "status": "pending",
+      "depends_on": [
+        "evo_011_bump_vscode_engine"
+      ],
+      "acceptance": "更新相关 devDependencies 后 `npm run compile` 无报错",
+      "acceptance_cmd": "npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "同步类型与编译器版本，修复因 engine 升级导致的类型/API 变更"
+    },
+    {
+      "id": "evo_013_runtime_validation",
+      "type": "coding",
+      "title": "在 VS Code 中 F5 启动并验证扩展在新 engine 下工作",
+      "status": "pending",
+      "depends_on": [
+        "evo_012_upgrade_devdeps_and_fix"
+      ],
+      "acceptance": "F5 启动扩展宿主不报错；GET /v1/models 返回 200；POST /v1/chat/completions（stream:false）返回 200",
+      "acceptance_cmd": "npm run compile 2>&1 | grep -c 'error TS' | xargs -I{} sh -c 'test {} -eq 0 && echo PASS || echo FAIL'",
+      "evolution_goal": "人工验证运行时兼容性与核心 API 行为"
+    }
   ]
 }

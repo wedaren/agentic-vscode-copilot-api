@@ -2,7 +2,36 @@
 
 ## 一句话介绍
 
-一个 vscode 插件暴露 vsocde.lm 能力，用 openai api 接口规范暴露
+一个 vscode 插件，将 `vscode.lm` 能力以 OpenAI API 兼容接口暴露在 `127.0.0.1:11435`。
+
+## 已支持的 API 能力
+
+| 端点 | 说明 |
+|---|---|
+| `GET /v1/models` | 返回 vscode.lm 可用模型列表 |
+| `POST /v1/chat/completions` | 聊天补全，支持非流式 + SSE 流式 |
+| `POST /v1/chat/completions` + `tools` | **Function Calling**：传入 OpenAI function tool 格式，返回 `tool_calls` |
+
+### Function Calling 请求示例
+
+```json
+{
+  "model": "gpt-4o-mini",
+  "messages": [{ "role": "user", "content": "..." }],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "my_tool",
+        "description": "...",
+        "parameters": { "type": "object", "properties": {} }
+      }
+    }
+  ]
+}
+```
+
+响应包含 `choices[0].message.tool_calls`（finish_reason 为 `tool_calls`），格式符合 OpenAI 规范。
 
 ## 启动
 

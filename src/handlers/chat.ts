@@ -2,6 +2,13 @@
  * handlers/chat.ts
  * 处理 POST /v1/chat/completions 请求（非流式 + 流式 SSE）
  * 将 OpenAI 格式请求转换为 vscode.lm API 调用，并将响应转回 OpenAI 格式
+ *
+ * 支持能力：
+ *   - 非流式响应（stream: false）
+ *   - 流式 SSE 响应（stream: true）
+ *   - Function Calling / tools：请求传入 tools 数组（OpenAI function tool 格式），
+ *     会转换为 vscode.LanguageModelChatTool（须 vscode.lm 支持），
+ *     响应中的 LanguageModelToolCallPart 会被转换为 OpenAI tool_calls 格式返回。
  */
 
 import * as http from 'http';
@@ -9,14 +16,27 @@ import * as vscode from 'vscode';
 
 /** OpenAI 消息格式 */
 interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** function calling 中工具调用结果对应的 call id */
+  tool_call_id?: string;
+}
+
+/** OpenAI function tool 定义 */
+interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
 }
 
 /** OpenAI chat/completions 请求体 */
 interface ChatRequest {
   model: string;
   messages: ChatMessage[];
+  tools?: ToolDefinition[];
   stream?: boolean;
 }
 
@@ -34,7 +54,8 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 
 /**
  * 将 OpenAI messages 转换为 vscode.LanguageModelChatMessage 数组
- * vscode.lm 不支持 system role，将 system 消息转换为 User 消息
+ * vscode.lm 不支持 system role，将 system 消息转换为 User 消息；
+ * tool role（工具执行结果）转换为 User 消息以传回上下文
  */
 function convertMessages(
   messages: ChatMessage[]
@@ -43,9 +64,20 @@ function convertMessages(
     if (msg.role === 'assistant') {
       return vscode.LanguageModelChatMessage.Assistant(msg.content);
     }
-    // system 和 user 都映射到 User 消息
+    // system、user、tool 都映射到 User 消息
     return vscode.LanguageModelChatMessage.User(msg.content);
   });
+}
+
+/**
+ * 将 OpenAI tool 定义转换为 vscode.LanguageModelChatTool 数组
+ */
+function convertTools(tools: ToolDefinition[]): vscode.LanguageModelChatTool[] {
+  return tools.map((t) => ({
+    name: t.function.name,
+    description: t.function.description ?? '',
+    inputSchema: (t.function.parameters ?? { type: 'object', properties: {} }) as Record<string, unknown>,
+  }));
 }
 
 /**
@@ -97,7 +129,7 @@ export async function handleChat(
     return;
   }
 
-  const { model: modelId, messages, stream = false } = chatReq;
+  const { model: modelId, messages, tools = [], stream = false } = chatReq;
 
   if (!modelId || !Array.isArray(messages)) {
     sendError(res, 400, 'model 和 messages 字段必填', 'invalid_request_error', 'missing_field');
@@ -128,6 +160,7 @@ export async function handleChat(
   }
 
   const lmMessages = convertMessages(messages);
+  const lmTools = convertTools(tools);
   const cancellation = new vscode.CancellationTokenSource();
   const completionId = `chatcmpl-${Date.now()}`;
   const created = Math.floor(Date.now() / 1000);
@@ -139,8 +172,8 @@ export async function handleChat(
     }
   });
 
-  // 30 秒超时保护
-  const TIMEOUT_MS = 30_000;
+  // 120 秒超时保护（复杂页面 + function calling 多轮调用需要更长时间）
+  const TIMEOUT_MS = 120_000;
   let isTimeout = false;
   const timeoutHandle = setTimeout(() => {
     isTimeout = true;
@@ -166,19 +199,58 @@ export async function handleChat(
     res.write(`data: ${JSON.stringify(firstChunk)}\n\n`);
 
     try {
-      const response = await selectedModel.sendRequest(lmMessages, {}, cancellation.token);
+      const response = await selectedModel.sendRequest(
+        lmMessages,
+        lmTools.length > 0 ? { tools: lmTools } : {},
+        cancellation.token
+      );
 
-      for await (const fragment of response.text) {
-        const chunk = {
+      // 收集 tool calls（需要全部收集后一起发出）
+      const toolCallAccumulator: Map<string, { id: string; name: string; args: string }> = new Map();
+
+      for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          const chunk = {
+            id: completionId,
+            object: 'chat.completion.chunk',
+            created,
+            model: selectedModel.id,
+            choices: [
+              { index: 0, delta: { content: part.value }, finish_reason: null },
+            ],
+          };
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        } else if (part instanceof vscode.LanguageModelToolCallPart) {
+          // 累积 tool call 参数（可能分多个 part 到达）
+          const callId = part.callId ?? `call_${toolCallAccumulator.size}`;
+          const existing = toolCallAccumulator.get(callId);
+          const argsStr = typeof part.input === 'string'
+            ? part.input
+            : JSON.stringify(part.input);
+          if (existing) {
+            existing.args += argsStr;
+          } else {
+            toolCallAccumulator.set(callId, { id: callId, name: part.name, args: argsStr });
+          }
+        }
+      }
+
+      // 如果有 tool calls，作为最终 delta 发出
+      if (toolCallAccumulator.size > 0) {
+        const toolCallsArr = Array.from(toolCallAccumulator.values()).map((tc, idx) => ({
+          index: idx,
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: tc.args },
+        }));
+        const toolChunk = {
           id: completionId,
           object: 'chat.completion.chunk',
           created,
           model: selectedModel.id,
-          choices: [
-            { index: 0, delta: { content: fragment }, finish_reason: null },
-          ],
+          choices: [{ index: 0, delta: { tool_calls: toolCallsArr }, finish_reason: 'tool_calls' }],
         };
-        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        res.write(`data: ${JSON.stringify(toolChunk)}\n\n`);
       }
 
       // 发送结束 chunk
@@ -187,7 +259,7 @@ export async function handleChat(
         object: 'chat.completion.chunk',
         created,
         model: selectedModel.id,
-        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        choices: [{ index: 0, delta: {}, finish_reason: toolCallAccumulator.size > 0 ? 'tool_calls' : 'stop' }],
       };
       res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
       res.write('data: [DONE]\n\n');
@@ -211,10 +283,42 @@ export async function handleChat(
   } else {
     // 非流式响应：收集所有 token 后一次性返回
     try {
-      const response = await selectedModel.sendRequest(lmMessages, {}, cancellation.token);
+      const response = await selectedModel.sendRequest(
+        lmMessages,
+        lmTools.length > 0 ? { tools: lmTools } : {},
+        cancellation.token
+      );
       let content = '';
-      for await (const fragment of response.text) {
-        content += fragment;
+      const toolCallMap: Map<string, { id: string; name: string; args: string }> = new Map();
+
+      for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          content += part.value;
+        } else if (part instanceof vscode.LanguageModelToolCallPart) {
+          const callId = part.callId ?? `call_${toolCallMap.size}`;
+          const argsStr = typeof part.input === 'string'
+            ? part.input
+            : JSON.stringify(part.input);
+          const existing = toolCallMap.get(callId);
+          if (existing) {
+            existing.args += argsStr;
+          } else {
+            toolCallMap.set(callId, { id: callId, name: part.name, args: argsStr });
+          }
+        }
+      }
+
+      // 构造 message：有 tool calls 时包含 tool_calls 字段
+      const hasToolCalls = toolCallMap.size > 0;
+      const toolCallsArr = Array.from(toolCallMap.values()).map((tc) => ({
+        id: tc.id,
+        type: 'function',
+        function: { name: tc.name, arguments: tc.args },
+      }));
+
+      const message: Record<string, unknown> = { role: 'assistant', content: content || null };
+      if (hasToolCalls) {
+        message['tool_calls'] = toolCallsArr;
       }
 
       const body = JSON.stringify({
@@ -225,8 +329,8 @@ export async function handleChat(
         choices: [
           {
             index: 0,
-            message: { role: 'assistant', content },
-            finish_reason: 'stop',
+            message,
+            finish_reason: hasToolCalls ? 'tool_calls' : 'stop',
           },
         ],
         usage: {
