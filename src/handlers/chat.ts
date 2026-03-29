@@ -136,6 +136,13 @@ export async function handleChat(
     return;
   }
 
+  // 检查模型是否在允许列表中（来自配置文件，非空列表表示启用了白名单）
+  const allowed = require('../config').getAllowedModels();
+  if (Array.isArray(allowed) && allowed.length > 0 && !allowed.includes(modelId)) {
+    sendError(res, 403, `模型 ${modelId} 未被允许`, 'permission_denied', 'model_not_allowed');
+    return;
+  }
+
   // 选取指定模型
   let selectedModel: vscode.LanguageModelChat | undefined;
   try {
@@ -266,8 +273,8 @@ export async function handleChat(
       res.end();
     } catch (err) {
       if (isTimeout) {
-        // 超时情况：写入超时错误 chunk
-        const errorChunk = { error: { message: '请求超时（30s）', type: 'timeout_error', code: 'timeout' } };
+        // 超时情况：写入超时错误 chunk（使用 TIMEOUT_MS 常量）
+        const errorChunk = { error: { message: `请求超时（${TIMEOUT_MS / 1000}s）`, type: 'timeout_error', code: 'timeout' } };
         res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
       } else {
         const message = err instanceof Error ? err.message : String(err);
@@ -343,8 +350,8 @@ export async function handleChat(
       res.end(body);
     } catch (err) {
       if (isTimeout) {
-        // 超时情况：返回 504
-        sendError(res, 504, '请求超时（30s）', 'timeout_error', 'timeout');
+        // 超时情况：返回 504（使用 TIMEOUT_MS 常量）
+        sendError(res, 504, `请求超时（${TIMEOUT_MS / 1000}s）`, 'timeout_error', 'timeout');
       } else {
         const { status, type, code } = mapErrorToStatus(err);
         const message = err instanceof Error ? err.message : String(err);

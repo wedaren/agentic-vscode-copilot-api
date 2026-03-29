@@ -4,16 +4,14 @@
  */
 
 import * as vscode from 'vscode';
+import { SCENARIOS } from '../scenarios';
+import * as cfg from '../config';
 
 /** 树节点类型标识 */
-type NodeKind = 'root' | 'detail' | 'scenario-group' | 'scenario';
+type NodeKind = 'root' | 'detail' | 'scenario-group' | 'scenario' | 'action' | 'model-group' | 'model';
 
-/** 内置模拟场景定义 */
-const SCENARIOS = [
-  { id: 'list-models',    label: '获取模型列表',  description: 'GET /v1/models' },
-  { id: 'chat-nonstream', label: '非流式对话',    description: 'POST /v1/chat/completions (stream:false)' },
-  { id: 'chat-stream',    label: '流式对话',      description: 'POST /v1/chat/completions (stream:true)' },
-];
+/** 场景状态 */
+type ScenarioStatus = 'idle' | 'running' | 'success' | 'failure';
 
 /** 单个树节点 */
 export class StatusTreeItem extends vscode.TreeItem {
@@ -45,6 +43,10 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
   private _isRunning = false;
   /** 当前服务监听端口 */
   private _port = 11435;
+  /** 各场景当前执行状态（idle/running/success/failure） */
+  private _scenarioStatuses: Record<string, ScenarioStatus> = {};
+  /** 缓存的模型列表（用于在直接调用 selectChatModels 失败时回退显示/选择） */
+  private _cachedModels: Array<{ id: string; label: string }> = [];
 
   /**
    * 更新服务状态并刷新 TreeView
@@ -57,20 +59,47 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
     this._onDidChangeTreeData.fire(undefined);
   }
 
+  /** 更新单个场景状态并刷新视图 */
+  setScenarioStatus(scenarioId: string, status: ScenarioStatus): void {
+    this._scenarioStatuses[scenarioId] = status;
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** 重置所有场景状态为 idle */
+  resetScenarioStatuses(): void {
+    for (const s of SCENARIOS) {
+      this._scenarioStatuses[s.id] = 'idle';
+    }
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** 刷新 TreeView（用于外部调用） */
+  refresh(): void {
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
   getTreeItem(element: StatusTreeItem): vscode.TreeItem {
     return element;
   }
 
-  getChildren(element?: StatusTreeItem): StatusTreeItem[] {
+  async getChildren(element?: StatusTreeItem): Promise<StatusTreeItem[]> {
     if (!element) {
-      // 顶层：服务状态根节点 + 模拟场景根节点（并列）
-      const statusLabel = this._isRunning ? '● 服务状态' : '○ 服务状态';
+      // 顶层：先放置配置快捷入口，然后服务状态、模拟场景、模型管理
+      const configureRoot = new StatusTreeItem('配置允许的模型', vscode.TreeItemCollapsibleState.None, 'action');
+      configureRoot.iconPath = new vscode.ThemeIcon('gear');
+      configureRoot.command = { command: 'copilotApi.configureModels', title: '配置允许的模型' };
+
+      const statusLabel = '服务状态';
       const statusRoot = new StatusTreeItem(
         statusLabel,
         vscode.TreeItemCollapsibleState.Expanded,
         'root'
       );
       statusRoot.description = this._isRunning ? '运行中' : '已停止';
+      // 使用图标并据状态着色：运行=绿色，已停止=红色
+      statusRoot.iconPath = this._isRunning
+        ? new vscode.ThemeIcon('circle-large', new vscode.ThemeColor('terminal.ansiGreen'))
+        : new vscode.ThemeIcon('circle-large-outline', new vscode.ThemeColor('terminal.ansiRed'));
 
       const scenarioGroup = new StatusTreeItem(
         '模拟场景',
@@ -78,7 +107,13 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
         'scenario-group'
       );
 
-      return [statusRoot, scenarioGroup];
+      const modelGroup = new StatusTreeItem(
+        '模型管理',
+        vscode.TreeItemCollapsibleState.Collapsed,
+        'model-group'
+      );
+
+      return [configureRoot, statusRoot, scenarioGroup, modelGroup];
     }
 
     if (element.kind === 'root') {
@@ -103,8 +138,20 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
     }
 
     if (element.kind === 'scenario-group') {
-      // 子节点：各模拟场景
-      return SCENARIOS.map((s) => {
+      // 子节点：播放全部 + 各模拟场景
+      const playAll = new StatusTreeItem(
+        '播放全部',
+        vscode.TreeItemCollapsibleState.None,
+        'action'
+      );
+      playAll.iconPath = new vscode.ThemeIcon('play');
+      playAll.command = {
+        command: 'copilotApi.runAllScenarios',
+        title: '播放全部',
+      };
+
+        const items = SCENARIOS.map((s) => {
+        const status = this._scenarioStatuses[s.id] ?? 'idle';
         const item = new StatusTreeItem(
           s.label,
           vscode.TreeItemCollapsibleState.None,
@@ -112,11 +159,17 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
           s.id
         );
         item.description = s.description;
-        // 场景节点的 contextValue 用于 menus when 表达式匹配
         item.contextValue = 'scenario';
-        // 播放图标
-        item.iconPath = new vscode.ThemeIcon('play-circle');
-        // 点击节点时执行 runScenario 命令，传入 item 本身
+        // 根据场景状态选择图标与颜色：运行=黄（同步/转动），成功=绿，失败=红，空闲=播放图标（简化为图标而非前缀 emoji）
+        if (status === 'running') {
+          item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('terminal.ansiYellow'));
+        } else if (status === 'success') {
+          item.iconPath = new vscode.ThemeIcon('check', new vscode.ThemeColor('terminal.ansiGreen'));
+        } else if (status === 'failure') {
+          item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('terminal.ansiRed'));
+        } else {
+          item.iconPath = new vscode.ThemeIcon('play-circle');
+        }
         item.command = {
           command: 'copilotApi.runScenario',
           title: '执行场景',
@@ -124,8 +177,90 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
         };
         return item;
       });
+
+      return [playAll, ...items];
+    }
+
+    if (element.kind === 'model-group') {
+      // 顶部操作：配置 + 刷新
+      const configure = new StatusTreeItem('配置允许的模型', vscode.TreeItemCollapsibleState.None, 'action');
+      configure.iconPath = new vscode.ThemeIcon('gear');
+      configure.command = { command: 'copilotApi.configureModels', title: '配置允许的模型' };
+
+      const refresh = new StatusTreeItem('刷新模型列表', vscode.TreeItemCollapsibleState.None, 'action');
+      refresh.iconPath = new vscode.ThemeIcon('refresh');
+      refresh.command = { command: 'copilotApi.refreshModels', title: '刷新模型列表' };
+
+      // 拉取模型列表（copilot 可能未授权）——展示全部模型，并在已允许模型上显示勾选图标，点击即可切换允许状态
+      try {
+        const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+        // 更新缓存（仅保存 id 与 label）
+        this._cachedModels = models.map((m) => ({ id: m.id, label: m.id }));
+        const allowed = cfg.getAllowedModels();
+
+        // 排序规则：
+        // 1) `gpt-5-mini` 始终排第一
+        // 2) 分组优先级：gpt* -> claude* -> gemini* -> 其它
+        // 3) 在同一组内，优先显示已允许的模型
+        // 4) 最后按 id 字母序
+        const groupPriority = (id: string) => {
+          if (id === 'gpt-5-mini') return 0;
+          if (/^gpt/i.test(id)) return 1;
+          if (/^claude/i.test(id)) return 2;
+          if (/^gemini/i.test(id)) return 3;
+          return 4;
+        };
+        const sorted = models.slice().sort((a, b) => {
+          const ga = groupPriority(a.id);
+          const gb = groupPriority(b.id);
+          if (ga !== gb) return ga - gb;
+
+          const aAllowed = Array.isArray(allowed) && allowed.includes(a.id);
+          const bAllowed = Array.isArray(allowed) && allowed.includes(b.id);
+          if (aAllowed !== bAllowed) return aAllowed ? -1 : 1;
+
+          return a.id.localeCompare(b.id);
+        });
+
+        // 默认模型从 VS Code 用户设置读取（如果未配置则为 undefined）
+        const defaultModel = vscode.workspace.getConfiguration('copilotApi').get<string>('defaultModel');
+        const modelItems = sorted.map((m) => {
+          const allowedFlag = Array.isArray(allowed) && allowed.includes(m.id);
+          const isDefault = defaultModel === m.id;
+          const item = new StatusTreeItem(m.id, vscode.TreeItemCollapsibleState.None, 'model');
+          // 如果是默认模型，在描述位置标注“默认”以便视觉识别；否则不额外描述
+          item.description = isDefault ? '默认' : '';
+          item.contextValue = 'model';
+          // 优先用星形标识默认模型；否则用勾选/空圈表示是否允许
+          if (isDefault) {
+            item.iconPath = new vscode.ThemeIcon('star', new vscode.ThemeColor('terminal.ansiYellow'));
+          } else {
+            item.iconPath = allowedFlag
+              ? new vscode.ThemeIcon('check', new vscode.ThemeColor('terminal.ansiGreen'))
+              : new vscode.ThemeIcon('circle-large-outline');
+          }
+          // 不在 treeitem 上绑定点击命令，避免误触；通过右键或 inline 操作进行配置
+          // tooltip 提示可通过右键或行内操作配置
+          item.tooltip = (allowedFlag ? '已允许，右键或行内操作可取消' : '未允许，右键或行内操作可允许') + (isDefault ? '（当前默认）' : ' — 右键或行内操作可设为默认模型');
+          return item;
+        });
+
+        if (modelItems.length === 0) {
+          return [refresh, new StatusTreeItem('无可用模型（未授权或列表为空）', vscode.TreeItemCollapsibleState.None, 'detail')];
+        }
+
+        return [refresh, ...modelItems];
+      } catch (e) {
+        return [refresh, new StatusTreeItem('无法获取模型（可能未登录 Copilot）', vscode.TreeItemCollapsibleState.None, 'detail')];
+      }
     }
 
     return [];
   }
+
+  /** 返回当前缓存的模型列表（只读副本） */
+  getCachedModels(): Array<{ id: string; label: string }> {
+    return this._cachedModels.slice();
+  }
+
 }

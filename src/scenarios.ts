@@ -5,8 +5,16 @@
 
 import * as http from 'http';
 import * as vscode from 'vscode';
+import * as cfg from './config';
 
 /** 场景元数据（用于日志展示） */
+export const SCENARIOS: Array<{ id: string; label: string; description: string }> = [
+  { id: 'list-models', label: '获取模型列表', description: 'GET /v1/models' },
+  { id: 'chat-nonstream', label: '非流式对话', description: 'POST /v1/chat/completions (stream:false)' },
+  { id: 'chat-stream', label: '流式对话', description: 'POST /v1/chat/completions (stream:true)' },
+];
+
+/** 场景标签元数据（仅用于内部映射） */
 const SCENARIO_META: Record<string, { label: string }> = {
   'list-models':    { label: '获取模型列表' },
   'chat-nonstream': { label: '非流式对话' },
@@ -19,11 +27,16 @@ const SCENARIO_META: Record<string, { label: string }> = {
  * @param port        本地服务监听端口
  * @param outputChannel VS Code OutputChannel 实例
  */
+/**
+ * 执行指定场景，向本地 HTTP 服务发送真实请求或在模拟模式下返回模拟结果
+ * @returns 是否成功（true 成功，false 失败）
+ */
 export async function runScenario(
   scenarioId: string,
   port: number,
-  outputChannel: vscode.OutputChannel
-): Promise<void> {
+  outputChannel: vscode.OutputChannel,
+  simulate: boolean = false
+): Promise<boolean> {
   const label = SCENARIO_META[scenarioId]?.label ?? scenarioId;
 
   // 根据场景 ID 确定请求方法、路径和请求体
@@ -31,6 +44,8 @@ export async function runScenario(
   let path: string;
   let body: string | undefined;
   let isStream: boolean = false;
+  // 默认模型从 VS Code 用户设置读取，若未配置则回退到 gpt-5-mini（用于本地/演示）
+  const defaultModel = vscode.workspace.getConfiguration('copilotApi').get<string>('defaultModel') ?? 'gpt-5-mini';
 
   switch (scenarioId) {
     case 'list-models':
@@ -41,7 +56,7 @@ export async function runScenario(
       method = 'POST';
       path = '/v1/chat/completions';
       body = JSON.stringify({
-        model: 'copilot-gpt-4o',
+        model: defaultModel,
         messages: [{ role: 'user', content: 'Hello! 简单介绍一下你自己。' }],
         stream: false,
       });
@@ -51,14 +66,14 @@ export async function runScenario(
       path = '/v1/chat/completions';
       isStream = true;
       body = JSON.stringify({
-        model: 'copilot-gpt-4o',
+        model: defaultModel,
         messages: [{ role: 'user', content: '你好，用一句话介绍你自己。' }],
         stream: true,
       });
       break;
     default:
       outputChannel.appendLine(`未知场景 ID: ${scenarioId}`);
-      return;
+      return false;
   }
 
   // 格式化当前时间
@@ -71,6 +86,22 @@ export async function runScenario(
   outputChannel.appendLine(`请求: ${method} http://127.0.0.1:${port}${path}`);
 
   const startTs = Date.now();
+
+  if (simulate) {
+    // 模拟执行：延迟并随机决定成功或失败（可视化演示用）
+    const delay = 300 + Math.floor(Math.random() * 800);
+    await new Promise((r) => setTimeout(r, delay));
+    const success = Math.random() < 0.9; // 90% 成功率
+    const elapsed = Date.now() - startTs;
+    if (success) {
+      outputChannel.appendLine(`状态: 200 OK (耗时: ${elapsed}ms)`);
+      outputChannel.appendLine('响应摘要: 模拟成功');
+    } else {
+      outputChannel.appendLine(`  错误 (耗时: ${elapsed}ms): 模拟后端错误`);
+    }
+    outputChannel.appendLine(separator);
+    return success;
+  }
 
   try {
     const result = await makeRequest(method, port, path, body, isStream);
@@ -92,13 +123,17 @@ export async function runScenario(
           : result.responseText;
       outputChannel.appendLine(`  ${summary}`);
     }
+
+    outputChannel.appendLine(separator);
+    // HTTP 状态码 2xx 视为成功
+    return result.statusCode >= 200 && result.statusCode < 300;
   } catch (err) {
     const elapsed = Date.now() - startTs;
     const msg = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(`  错误 (耗时: ${elapsed}ms): ${msg}`);
+    outputChannel.appendLine(separator);
+    return false;
   }
-
-  outputChannel.appendLine(separator);
 }
 
 /** makeRequest 返回结果 */
@@ -164,9 +199,9 @@ function makeRequest(
       res.on('error', (e: Error) => reject(e));
     });
 
-    // 10 秒超时
-    req.setTimeout(10000, () => {
-      req.destroy(new Error('请求超时（10 秒）'));
+    // 客户端超时：与服务器超时一致，设为 120 秒
+    req.setTimeout(120000, () => {
+      req.destroy(new Error('请求超时（120 秒）'));
     });
 
     req.on('error', (e: Error) => reject(e));

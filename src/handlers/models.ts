@@ -18,7 +18,11 @@ export async function handleModels(
     // 获取所有 Copilot 模型，未登录时返回空数组
     const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
 
-    const data = models.map((m) => ({
+    // 读取允许的模型配置（来自用户主目录配置文件，空数组或未配置表示允许所有）
+    const allowed = require('../config').getAllowedModels();
+    const filtered = Array.isArray(allowed) && allowed.length > 0 ? models.filter((m) => allowed.includes(m.id)) : models;
+
+    const data = filtered.map((m) => ({
       id: m.id,
       object: 'model',
       created: Math.floor(Date.now() / 1000),

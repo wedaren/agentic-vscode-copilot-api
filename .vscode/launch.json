@@ -11,7 +11,11 @@
       "outFiles": [
         "${workspaceFolder}/out/**/*.js"
       ],
-      "preLaunchTask": "${defaultBuildTask}"
+      "preLaunchTask": "${defaultBuildTask}",
+      "env": {
+        // 开发时通过该环境变量覆盖默认端口，避免与市场版冲突
+        "COPILOT_API_PORT": "11436"
+      }
     }
   ]
 }
