@@ -178,7 +178,7 @@
       "id": "evo_012_upgrade_devdeps_and_fix",
       "type": "coding",
       "title": "升级 TypeScript / @types / devDependencies 并修复编译错误（若有）",
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "evo_011_bump_vscode_engine"
       ],
