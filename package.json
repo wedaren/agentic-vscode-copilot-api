@@ -4,6 +4,7 @@
   "description": "通过 OpenAI 兼容接口暴露 vscode.lm 语言模型能力",
   "version": "0.1.9",
   "publisher": "wedaren",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "https://github.com/wedaren/agentic-vscode-copilot-api.git"
