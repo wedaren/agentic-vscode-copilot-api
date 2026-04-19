@@ -257,14 +257,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
  * 插件停用时注销并停止服务器
  */
 export async function deactivate(): Promise<void> {
-  // fire-and-forget：注销不阻塞停用流程
-  if (_activePort > 0) {
-    if (_activePort === _configuredPort) {
-      unregisterLocal(_activePort);
-    } else {
-      unregisterFromMaster(_activePort);
-    }
-    _activePort = 0;
-  }
+  _activePort = 0;
   await stopServer();
 }
