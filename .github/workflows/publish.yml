@@ -52,10 +52,10 @@ jobs:
         run: npm install -g @vscode/vsce
 
       - name: 打包 .vsix 文件
-        run: vsce package
+        run: vsce package --skip-license
 
       - name: 发布到 VSCode 市场
-        run: vsce publish
+        run: vsce publish --skip-license
         env:
           # 在仓库 Settings → Secrets → Actions 中添加 VSCE_PAT
           # 获取方式见 README 说明
