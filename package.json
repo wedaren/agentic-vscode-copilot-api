@@ -72,6 +72,11 @@
       {
         "command": "copilotApi.refreshModels",
         "title": "Copilot API: 刷新模型列表"
+      },
+      {
+        "command": "copilotApi.setDefaultModel",
+        "title": "Copilot API: 设置默认模型",
+        "icon": "$(star)"
       }
     ],
     "menus": {
@@ -100,14 +105,6 @@
           "type": "string",
           "default": "gpt-5-mini",
           "description": "本地/演示模式下的默认模型 ID（仅用于本地 UI/场景回退），通过 VS Code 用户设置配置"
-        },
-        "copilotApi.allowedModels": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "description": "仅供 UI 快速参考（主配置已迁移到 per-user JSON），此字段保留以兼容旧版工具链"
         }
       }
     }

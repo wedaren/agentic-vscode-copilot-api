@@ -123,14 +123,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       'copilotApi.runScenario',
       async (item: import('./views/StatusTreeProvider').StatusTreeItem) => {
         const scenarioId = item?.scenarioId ?? String(item);
-        // 使用同样的解析逻辑确定当前配置端口
-        const currentPort = resolveConfiguredPort();
-        // 是否以模拟模式执行（读取配置文件）
-        const simulate = cfg.getSimulate();
-        // 更新状态并展示 OutputChannel
+        // 使用服务实际监听端口（端口冲突时已自动递增）
         provider.setScenarioStatus(scenarioId, 'running');
         outputChannel.show(true);
-        const ok = await runScenario(scenarioId, currentPort, outputChannel, simulate);
+        const ok = await runScenario(scenarioId, actualPort, outputChannel);
         provider.setScenarioStatus(scenarioId, ok ? 'success' : 'failure');
       }
     )
@@ -139,13 +135,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 注册播放全部场景命令（顺序执行，更新 TreeView 状态）
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.runAllScenarios', async () => {
-      const currentPort = resolveConfiguredPort();
-      const simulate = cfg.getSimulate();
+      // 使用服务实际监听端口（端口冲突时已自动递增）
       outputChannel.show(true);
       provider.resetScenarioStatuses();
       for (const s of SCENARIOS) {
         provider.setScenarioStatus(s.id, 'running');
-        const ok = await runScenario(s.id, currentPort, outputChannel, simulate);
+        const ok = await runScenario(s.id, actualPort, outputChannel);
         provider.setScenarioStatus(s.id, ok ? 'success' : 'failure');
         // 小间隔，视觉上更明显
         await new Promise((r) => setTimeout(r, 200));

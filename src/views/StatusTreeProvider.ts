@@ -42,7 +42,7 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
   /** 当前服务运行状态 */
   private _isRunning = false;
   /** 当前服务监听端口 */
-  private _port = 11435;
+  private _port = cfg.DEFAULT_PORT;
   /** 各场景当前执行状态（idle/running/success/failure） */
   private _scenarioStatuses: Record<string, ScenarioStatus> = {};
   /** 缓存的模型列表（用于在直接调用 selectChatModels 失败时回退显示/选择） */

@@ -2,9 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+/** 默认起始端口（自动探测可用端口的起点） */
+export const DEFAULT_PORT = 11435;
+
 export interface CopilotApiConfig {
   port?: number;
-  simulate?: boolean;
   allowedModels?: string[];
 }
 
@@ -23,8 +25,7 @@ export const CONFIG_DIR = path.join(baseConfigDir, 'copilot-api');
 export const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 let _cfg: CopilotApiConfig = {
-  port: 11435,
-  simulate: false,
+  port: DEFAULT_PORT,
   allowedModels: [],
 };
 
@@ -72,11 +73,7 @@ export function getConfig(): CopilotApiConfig {
 }
 
 export function getPort(): number {
-  return Number.isInteger(_cfg.port as number) ? (_cfg.port as number) : 11435;
-}
-
-export function getSimulate(): boolean {
-  return !!_cfg.simulate;
+  return Number.isInteger(_cfg.port as number) ? (_cfg.port as number) : DEFAULT_PORT;
 }
 
 export function getAllowedModels(): string[] {
@@ -93,10 +90,7 @@ export async function setPort(port: number): Promise<void> {
   await saveConfig();
 }
 
-export async function setSimulate(sim: boolean): Promise<void> {
-  _cfg.simulate = !!sim;
-  await saveConfig();
-}
+
 
 export async function setConfig(key: keyof CopilotApiConfig, value: unknown): Promise<void> {
   (_cfg as any)[key] = value as any;

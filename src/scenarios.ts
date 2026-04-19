@@ -14,30 +14,19 @@ export const SCENARIOS: Array<{ id: string; label: string; description: string }
   { id: 'chat-stream', label: '流式对话', description: 'POST /v1/chat/completions (stream:true)' },
 ];
 
-/** 场景标签元数据（仅用于内部映射） */
-const SCENARIO_META: Record<string, { label: string }> = {
-  'list-models':    { label: '获取模型列表' },
-  'chat-nonstream': { label: '非流式对话' },
-  'chat-stream':    { label: '流式对话' },
-};
-
 /**
  * 执行指定场景，向本地 HTTP 服务发送真实请求，结果输出到 OutputChannel
  * @param scenarioId  场景 ID：'list-models' | 'chat-nonstream' | 'chat-stream'
  * @param port        本地服务监听端口
  * @param outputChannel VS Code OutputChannel 实例
- */
-/**
- * 执行指定场景，向本地 HTTP 服务发送真实请求或在模拟模式下返回模拟结果
  * @returns 是否成功（true 成功，false 失败）
  */
 export async function runScenario(
   scenarioId: string,
   port: number,
-  outputChannel: vscode.OutputChannel,
-  simulate: boolean = false
+  outputChannel: vscode.OutputChannel
 ): Promise<boolean> {
-  const label = SCENARIO_META[scenarioId]?.label ?? scenarioId;
+  const label = SCENARIOS.find((s) => s.id === scenarioId)?.label ?? scenarioId;
 
   // 根据场景 ID 确定请求方法、路径和请求体
   let method: string;
@@ -86,22 +75,6 @@ export async function runScenario(
   outputChannel.appendLine(`请求: ${method} http://127.0.0.1:${port}${path}`);
 
   const startTs = Date.now();
-
-  if (simulate) {
-    // 模拟执行：延迟并随机决定成功或失败（可视化演示用）
-    const delay = 300 + Math.floor(Math.random() * 800);
-    await new Promise((r) => setTimeout(r, delay));
-    const success = Math.random() < 0.9; // 90% 成功率
-    const elapsed = Date.now() - startTs;
-    if (success) {
-      outputChannel.appendLine(`状态: 200 OK (耗时: ${elapsed}ms)`);
-      outputChannel.appendLine('响应摘要: 模拟成功');
-    } else {
-      outputChannel.appendLine(`  错误 (耗时: ${elapsed}ms): 模拟后端错误`);
-    }
-    outputChannel.appendLine(separator);
-    return success;
-  }
 
   try {
     const result = await makeRequest(method, port, path, body, isStream);
