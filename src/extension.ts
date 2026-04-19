@@ -148,6 +148,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
+  // 添加复制服务地址命令
+  context.subscriptions.push(
+    vscode.commands.registerCommand('copilotApi.copyUrl', async () => {
+      const url = `http://127.0.0.1:${actualPort}`;
+      await vscode.env.clipboard.writeText(url);
+      vscode.window.showInformationMessage(`已复制：${url}`);
+    })
+  );
+
   // 注册刷新模型列表命令（触发 TreeView 刷新）
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.refreshModels', async () => {

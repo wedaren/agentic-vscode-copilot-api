@@ -17,9 +17,16 @@ import * as vscode from 'vscode';
 /** OpenAI 消息格式 */
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  /** 支持纯字符串或 content array（如 [{type:'text',text:'...'}]） */
+  content: string | Array<{ type: string; text?: string }> | null;
   /** function calling 中工具调用结果对应的 call id */
   tool_call_id?: string;
+  /** assistant 消息历史中的工具调用记录（多轮 function calling） */
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
 }
 
 /** OpenAI function tool 定义 */
@@ -52,20 +59,55 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+/** 将 content 字段统一转换为 string（兼容 OpenAI array 格式） */
+function normalizeContent(
+  content: string | Array<{ type: string; text?: string }> | null | undefined
+): string {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  return content
+    .filter((c) => c.type === 'text' && c.text != null)
+    .map((c) => c.text!)
+    .join('');
+}
+
 /**
  * 将 OpenAI messages 转换为 vscode.LanguageModelChatMessage 数组
- * vscode.lm 不支持 system role，将 system 消息转换为 User 消息；
- * tool role（工具执行结果）转换为 User 消息以传回上下文
+ * - system/user → User 消息（vscode.lm 不支持 system role）
+ * - assistant + tool_calls → Assistant 消息（带 LanguageModelToolCallPart，保留多轮上下文）
+ * - tool → User 消息（带 LanguageModelToolResultPart，传回工具执行结果）
  */
 function convertMessages(
   messages: ChatMessage[]
 ): vscode.LanguageModelChatMessage[] {
   return messages.map((msg) => {
     if (msg.role === 'assistant') {
-      return vscode.LanguageModelChatMessage.Assistant(msg.content);
+      // 含 tool_calls 历史时需要携带工具调用记录，否则模型丢失多轮上下文
+      if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+        const parts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
+        const text = normalizeContent(msg.content);
+        if (text) {
+          parts.push(new vscode.LanguageModelTextPart(text));
+        }
+        for (const tc of msg.tool_calls) {
+          let input: object;
+          try { input = JSON.parse(tc.function.arguments || '{}'); } catch { input = {}; }
+          parts.push(new vscode.LanguageModelToolCallPart(tc.id, tc.function.name, input));
+        }
+        return vscode.LanguageModelChatMessage.Assistant(parts);
+      }
+      return vscode.LanguageModelChatMessage.Assistant(normalizeContent(msg.content));
     }
-    // system、user、tool 都映射到 User 消息
-    return vscode.LanguageModelChatMessage.User(msg.content);
+    if (msg.role === 'tool') {
+      // 工具执行结果：使用 LanguageModelToolResultPart 传回，保留 tool_call_id 关联
+      return vscode.LanguageModelChatMessage.User([
+        new vscode.LanguageModelToolResultPart(msg.tool_call_id ?? '', [
+          new vscode.LanguageModelTextPart(normalizeContent(msg.content)),
+        ]),
+      ]);
+    }
+    // system、user 映射到 User 消息
+    return vscode.LanguageModelChatMessage.User(normalizeContent(msg.content));
   });
 }
 
@@ -212,8 +254,10 @@ export async function handleChat(
         cancellation.token
       );
 
-      // 收集 tool calls（需要全部收集后一起发出）
+      // 收集 tool calls（需要全部收集后一起发出）和 usage 统计
       const toolCallAccumulator: Map<string, { id: string; name: string; args: string }> = new Map();
+      let promptTokens = 0;
+      let completionTokens = 0;
 
       for await (const part of response.stream) {
         if (part instanceof vscode.LanguageModelTextPart) {
@@ -239,6 +283,10 @@ export async function handleChat(
           } else {
             toolCallAccumulator.set(callId, { id: callId, name: part.name, args: argsStr });
           }
+        } else if (part && typeof (part as any).inputTokens === 'number') {
+          // LanguageModelUsagePart（鸭子类型检测，兼容不同 vscode 版本）
+          promptTokens = (part as any).inputTokens;
+          completionTokens = (part as any).outputTokens ?? 0;
         }
       }
 
@@ -260,12 +308,17 @@ export async function handleChat(
         res.write(`data: ${JSON.stringify(toolChunk)}\n\n`);
       }
 
-      // 发送结束 chunk
+      // 发送结束 chunk（含 usage 统计）
       const finalChunk = {
         id: completionId,
         object: 'chat.completion.chunk',
         created,
         model: selectedModel.id,
+        usage: {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
+        },
         choices: [{ index: 0, delta: {}, finish_reason: toolCallAccumulator.size > 0 ? 'tool_calls' : 'stop' }],
       };
       res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
@@ -296,6 +349,8 @@ export async function handleChat(
         cancellation.token
       );
       let content = '';
+      let promptTokens = 0;
+      let completionTokens = 0;
       const toolCallMap: Map<string, { id: string; name: string; args: string }> = new Map();
 
       for await (const part of response.stream) {
@@ -312,6 +367,10 @@ export async function handleChat(
           } else {
             toolCallMap.set(callId, { id: callId, name: part.name, args: argsStr });
           }
+        } else if (part && typeof (part as any).inputTokens === 'number') {
+          // LanguageModelUsagePart（鸭子类型检测，兼容不同 vscode 版本）
+          promptTokens = (part as any).inputTokens;
+          completionTokens = (part as any).outputTokens ?? 0;
         }
       }
 
@@ -341,9 +400,9 @@ export async function handleChat(
           },
         ],
         usage: {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
         },
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });

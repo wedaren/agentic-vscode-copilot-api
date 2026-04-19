@@ -4,7 +4,7 @@
  */
 
 import * as http from 'http';
-import { handleModels } from './handlers/models';
+import { handleModels, handleModelById } from './handlers/models';
 import { handleChat } from './handlers/chat';
 
 /**
@@ -29,7 +29,11 @@ export async function route(
     await handleChat(req, res);
     return;
   }
-
+  // GET /v1/models/:model（顺序在 /v1/models 精确匹配之后）
+  if (method === 'GET' && url.startsWith('/v1/models/')) {
+    await handleModelById(req, res);
+    return;
+  }
   // 404 兜底
   const body = JSON.stringify({
     error: {

@@ -77,6 +77,11 @@
         "command": "copilotApi.setDefaultModel",
         "title": "Copilot API: 设置默认模型",
         "icon": "$(star)"
+      },
+      {
+        "command": "copilotApi.copyUrl",
+        "title": "Copilot API: 复制服务地址",
+        "icon": "$(copy)"
       }
     ],
     "menus": {
@@ -84,6 +89,11 @@
         {
           "command": "copilotApi.runScenario",
           "when": "viewItem == scenario",
+          "group": "inline"
+        },
+        {
+          "command": "copilotApi.copyUrl",
+          "when": "view == copilotApi.statusView && viewItem == url",
           "group": "inline"
         },
         {

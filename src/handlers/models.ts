@@ -41,3 +41,41 @@ export async function handleModels(
     res.end(body);
   }
 }
+
+/**
+ * 处理 GET /v1/models/:model 请求
+ * 返回单个模型信息，不存在时返回 404
+ */
+export async function handleModelById(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+): Promise<void> {
+  const modelId = decodeURIComponent((req.url ?? '').replace('/v1/models/', ''));
+  try {
+    const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+    const found = models.find((m) => m.id === modelId);
+    if (!found) {
+      const body = JSON.stringify({
+        error: { message: `模型 ${modelId} 不存在`, type: 'not_found_error', code: 'model_not_found' },
+      });
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(body);
+      return;
+    }
+    const body = JSON.stringify({
+      id: found.id,
+      object: 'model',
+      created: Math.floor(Date.now() / 1000),
+      owned_by: 'copilot',
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(body);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const body = JSON.stringify({
+      error: { message, type: 'server_error', code: 'internal_error' },
+    });
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(body);
+  }
+}

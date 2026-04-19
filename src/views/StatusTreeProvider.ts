@@ -117,18 +117,26 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
     }
 
     if (element.kind === 'root') {
-      // 子节点：端口、地址、接口信息
+      // 子节点：端口、地址（可点击复制）、接口信息
+      const urlItem = new StatusTreeItem(
+        `http://127.0.0.1:${this._port}`,
+        vscode.TreeItemCollapsibleState.None,
+        'detail'
+      );
+      urlItem.iconPath = new vscode.ThemeIcon('copy');
+      urlItem.tooltip = '点击复制服务地址';
+      urlItem.contextValue = 'url';
+      urlItem.command = {
+        command: 'copilotApi.copyUrl',
+        title: '复制服务地址',
+      };
       return [
         new StatusTreeItem(
           `端口：${this._port}`,
           vscode.TreeItemCollapsibleState.None,
           'detail'
         ),
-        new StatusTreeItem(
-          '地址：127.0.0.1',
-          vscode.TreeItemCollapsibleState.None,
-          'detail'
-        ),
+        urlItem,
         new StatusTreeItem(
           '接口：/v1/models, /v1/chat/completions',
           vscode.TreeItemCollapsibleState.None,
