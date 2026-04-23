@@ -14,11 +14,16 @@
 import * as http from 'http';
 import * as vscode from 'vscode';
 
+/** OpenAI 消息 content 的单元（text 或 image_url） */
+type TextContentPart = { type: 'text'; text?: string };
+type ImageContentPart = { type: 'image_url'; image_url?: { url?: string; detail?: string } };
+type ChatContentPart = TextContentPart | ImageContentPart;
+
 /** OpenAI 消息格式 */
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  /** 支持纯字符串或 content array（如 [{type:'text',text:'...'}]） */
-  content: string | Array<{ type: string; text?: string }> | null;
+  /** 支持纯字符串或 content array（text + image_url 的 OpenAI 多模态格式） */
+  content: string | ChatContentPart[] | null;
   /** function calling 中工具调用结果对应的 call id */
   tool_call_id?: string;
   /** assistant 消息历史中的工具调用记录（多轮 function calling） */
@@ -59,16 +64,61 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-/** 将 content 字段统一转换为 string（兼容 OpenAI array 格式） */
+/** 将 content 字段统一转换为 string（兼容 OpenAI array 格式，仅抽 text part） */
 function normalizeContent(
-  content: string | Array<{ type: string; text?: string }> | null | undefined
+  content: string | ChatContentPart[] | null | undefined
 ): string {
   if (content == null) return '';
   if (typeof content === 'string') return content;
   return content
-    .filter((c) => c.type === 'text' && c.text != null)
+    .filter((c): c is TextContentPart => c.type === 'text' && c.text != null)
     .map((c) => c.text!)
     .join('');
+}
+
+/** 只接受 base64 data URI；http(s) 链接由上游负责预取成 data URI（vscode.lm 不会主动 fetch）。 */
+const SUPPORTED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+function decodeImageDataUri(url: string): { bytes: Uint8Array; mime: string } | null {
+  const m = /^data:(image\/[a-zA-Z0-9+.-]+)(?:;[^;,]*)*;base64,(.+)$/i.exec(url);
+  if (!m) return null;
+  const mime = m[1].toLowerCase();
+  if (!SUPPORTED_IMAGE_MIMES.has(mime)) return null;
+  try {
+    return { bytes: Buffer.from(m[2], 'base64'), mime };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * user / system 消息转 vscode.lm chat parts，支持多模态。
+ * text part → LanguageModelTextPart
+ * image_url part → LanguageModelDataPart.image（仅 data URI；不支持的 mime / 非 data URI 退成文本占位）
+ */
+function buildUserParts(
+  content: string | ChatContentPart[] | null | undefined
+): Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> {
+  if (content == null) return [];
+  if (typeof content === 'string') {
+    return content ? [new vscode.LanguageModelTextPart(content)] : [];
+  }
+  const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelDataPart> = [];
+  for (const p of content) {
+    if (p.type === 'text') {
+      if (p.text) parts.push(new vscode.LanguageModelTextPart(p.text));
+    } else if (p.type === 'image_url') {
+      const url = p.image_url?.url;
+      if (!url) continue;
+      const decoded = decodeImageDataUri(url);
+      if (decoded) {
+        parts.push(vscode.LanguageModelDataPart.image(decoded.bytes, decoded.mime));
+      } else {
+        // 非 data URI 或 mime 不支持：退成文本占位，避免模型完全失去"有图"上下文
+        parts.push(new vscode.LanguageModelTextPart(`[image skipped: ${url.slice(0, 120)}]`));
+      }
+    }
+  }
+  return parts;
 }
 
 /**
@@ -106,8 +156,12 @@ function convertMessages(
         ]),
       ]);
     }
-    // system、user 映射到 User 消息
-    return vscode.LanguageModelChatMessage.User(normalizeContent(msg.content));
+    // system、user 映射到 User 消息；走 buildUserParts 以保留多模态（image_url）
+    const userParts = buildUserParts(msg.content);
+    if (userParts.length === 0) {
+      return vscode.LanguageModelChatMessage.User('');
+    }
+    return vscode.LanguageModelChatMessage.User(userParts);
   });
 }
 
