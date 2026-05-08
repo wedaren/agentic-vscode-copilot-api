@@ -9,7 +9,7 @@ import * as net from 'net';
 import { route } from './router';
 
 /** 扩展版本号（用于服务探测识别） */
-export const API_VERSION = '0.1.16';
+export const API_VERSION = '0.1.18';
 
 /** 服务器实例（单例） */
 let server: http.Server | undefined;
