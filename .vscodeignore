@@ -1,0 +1,20 @@
+# 开发文件
+src/
+scripts/
+.gitignore
+.vscode/
+
+# 项目元数据
+.agent/
+.claude/
+.github/
+
+# 构建产物（由 prepublish 重新生成）
+out/*.map
+
+# 依赖
+node_modules/
+
+# 其他
+*.vsix
+dist/
