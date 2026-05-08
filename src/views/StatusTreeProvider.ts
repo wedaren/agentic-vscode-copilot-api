@@ -39,10 +39,14 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
   readonly onDidChangeTreeData: vscode.Event<StatusTreeItem | undefined> =
     this._onDidChangeTreeData.event;
 
-  /** 当前服务运行状态 */
+  /** 当前服务运行状态（本窗口提供服务） */
   private _isRunning = false;
-  /** 当前服务监听端口 */
-  private _port = cfg.DEFAULT_PORT;
+  /** 当前服务监听端口（本窗口） */
+  private _port = 0;
+  /** 是否由其他窗口提供服务 */
+  private _isRemote = false;
+  /** 远程服务端口 */
+  private _remotePort = 0;
   /** 各场景当前执行状态（idle/running/success/failure） */
   private _scenarioStatuses: Record<string, ScenarioStatus> = {};
   /** 缓存的模型列表（用于在直接调用 selectChatModels 失败时回退显示/选择） */
@@ -50,13 +54,32 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
 
   /**
    * 更新服务状态并刷新 TreeView
-   * @param isRunning 服务是否正在运行
+   * @param isRunning 服务是否正在运行（本窗口提供）
    * @param port 服务监听端口
    */
   update(isRunning: boolean, port: number): void {
     this._isRunning = isRunning;
     this._port = port;
+    this._isRemote = false;
+    this._remotePort = 0;
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /**
+   * 标记为由其他窗口提供服务
+   * @param port 远程服务端口
+   */
+  updateRemote(port: number): void {
+    this._isRunning = false;
+    this._port = 0;
+    this._isRemote = true;
+    this._remotePort = port;
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** 获取当前记录的远程端口 */
+  getRemotePort(): number {
+    return this._remotePort;
   }
 
   /** 更新单个场景状态并刷新视图 */
@@ -95,11 +118,16 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
         vscode.TreeItemCollapsibleState.Expanded,
         'root'
       );
-      statusRoot.description = this._isRunning ? '运行中' : '已停止';
-      // 使用图标并据状态着色：运行=绿色，已停止=红色
-      statusRoot.iconPath = this._isRunning
-        ? new vscode.ThemeIcon('circle-large', new vscode.ThemeColor('terminal.ansiGreen'))
-        : new vscode.ThemeIcon('circle-large-outline', new vscode.ThemeColor('terminal.ansiRed'));
+      if (this._isRunning) {
+        statusRoot.description = '运行中（本窗口）';
+        statusRoot.iconPath = new vscode.ThemeIcon('circle-large', new vscode.ThemeColor('terminal.ansiGreen'));
+      } else if (this._isRemote) {
+        statusRoot.description = '由其他窗口提供';
+        statusRoot.iconPath = new vscode.ThemeIcon('circle-large', new vscode.ThemeColor('terminal.ansiBlue'));
+      } else {
+        statusRoot.description = '已停止';
+        statusRoot.iconPath = new vscode.ThemeIcon('circle-large-outline', new vscode.ThemeColor('terminal.ansiRed'));
+      }
 
       const scenarioGroup = new StatusTreeItem(
         '模拟场景',
@@ -118,31 +146,53 @@ export class StatusTreeProvider implements vscode.TreeDataProvider<StatusTreeIte
 
     if (element.kind === 'root') {
       // 子节点：端口、地址（可点击复制）、接口信息
-      const urlItem = new StatusTreeItem(
-        `http://127.0.0.1:${this._port}`,
-        vscode.TreeItemCollapsibleState.None,
-        'detail'
-      );
-      urlItem.iconPath = new vscode.ThemeIcon('copy');
-      urlItem.tooltip = '点击复制服务地址';
-      urlItem.contextValue = 'url';
-      urlItem.command = {
-        command: 'copilotApi.copyUrl',
-        title: '复制服务地址',
-      };
-      return [
-        new StatusTreeItem(
-          `端口：${this._port}`,
+      const port = this._isRunning ? this._port : (this._isRemote ? this._remotePort : 0);
+      const items: StatusTreeItem[] = [];
+      if (port > 0) {
+        const urlItem = new StatusTreeItem(
+          `http://127.0.0.1:${port}`,
           vscode.TreeItemCollapsibleState.None,
           'detail'
-        ),
-        urlItem,
-        new StatusTreeItem(
-          '接口：/v1/models, /v1/chat/completions',
-          vscode.TreeItemCollapsibleState.None,
-          'detail'
-        ),
-      ];
+        );
+        urlItem.iconPath = new vscode.ThemeIcon('copy');
+        urlItem.tooltip = '点击复制服务地址';
+        urlItem.contextValue = 'url';
+        urlItem.command = {
+          command: 'copilotApi.copyUrl',
+          title: '复制服务地址',
+        };
+        items.push(
+          new StatusTreeItem(
+            `端口：${port}`,
+            vscode.TreeItemCollapsibleState.None,
+            'detail'
+          ),
+          urlItem,
+          new StatusTreeItem(
+            '接口：/v1/models, /v1/chat/completions',
+            vscode.TreeItemCollapsibleState.None,
+            'detail'
+          )
+        );
+        if (this._isRemote) {
+          const hint = new StatusTreeItem(
+            '提示：服务由其他窗口运行',
+            vscode.TreeItemCollapsibleState.None,
+            'detail'
+          );
+          hint.iconPath = new vscode.ThemeIcon('info');
+          items.push(hint);
+        }
+      } else {
+        items.push(
+          new StatusTreeItem(
+            '服务未运行',
+            vscode.TreeItemCollapsibleState.None,
+            'detail'
+          )
+        );
+      }
+      return items;
     }
 
     if (element.kind === 'scenario-group') {

@@ -8,8 +8,14 @@ import * as http from 'http';
 import * as net from 'net';
 import { route } from './router';
 
+/** 扩展版本号（用于服务探测识别） */
+export const API_VERSION = '0.1.16';
+
 /** 服务器实例（单例） */
 let server: http.Server | undefined;
+
+/** 当前监听的端口（用于外部查询） */
+let activePort = 0;
 
 /** 当前活跃请求数（并发限制用） */
 let activeRequests = 0;
@@ -38,6 +44,9 @@ export function startServer(port: number): Promise<void> {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+      // 统一添加服务识别头，便于多实例间探测
+      res.setHeader('X-Copilot-API-Version', API_VERSION);
 
       // OPTIONS 预检请求直接返回 204
       if (req.method === 'OPTIONS') {
@@ -76,10 +85,12 @@ export function startServer(port: number): Promise<void> {
     });
 
     server.listen(port, '127.0.0.1', () => {
+      activePort = port;
       resolve();
     });
 
     server.on('error', (err) => {
+      activePort = 0;
       reject(err);
     });
   });
@@ -120,15 +131,27 @@ export function findAvailablePort(startPort: number, maxTries: number = 10): Pro
 /**
  * 停止 HTTP 服务器
  */
+/**
+ * 停止 HTTP 服务器
+ */
 export function stopServer(): Promise<void> {
   return new Promise((resolve) => {
     if (server) {
       server.close(() => {
         server = undefined;
+        activePort = 0;
         resolve();
       });
     } else {
+      activePort = 0;
       resolve();
     }
   });
+}
+
+/**
+ * 获取当前服务器监听的端口（未运行返回 0）
+ */
+export function getActivePort(): number {
+  return activePort;
 }

@@ -2,7 +2,7 @@
   "name": "copilot-api",
   "displayName": "Copilot API",
   "description": "通过 OpenAI 兼容接口暴露 vscode.lm 语言模型能力",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "publisher": "wedaren",
   "license": "UNLICENSED",
   "repository": {
@@ -44,11 +44,13 @@
     "commands": [
       {
         "command": "copilotApi.start",
-        "title": "Copilot API: 启动服务器"
+        "title": "启动服务",
+        "icon": "$(debug-start)"
       },
       {
         "command": "copilotApi.stop",
-        "title": "Copilot API: 停止服务器"
+        "title": "停止服务",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "copilotApi.runScenario",
@@ -85,6 +87,18 @@
       }
     ],
     "menus": {
+      "view/title": [
+        {
+          "command": "copilotApi.start",
+          "when": "view == copilotApi.statusView && !copilotApi.localRunning",
+          "group": "navigation@1"
+        },
+        {
+          "command": "copilotApi.stop",
+          "when": "view == copilotApi.statusView && copilotApi.localRunning",
+          "group": "navigation@1"
+        }
+      ],
       "view/item/context": [
         {
           "command": "copilotApi.runScenario",

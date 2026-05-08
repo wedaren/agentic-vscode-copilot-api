@@ -1,36 +1,66 @@
 /**
  * extension.ts
  * VS Code 扩展入口：插件激活/停用时管理 HTTP 服务器生命周期，注册命令
+ *
+ * 优化：默认不再自动启动服务器，避免每开一个 VS Code 窗口就多占用一个端口。
+ * 用户通过 TreeView 的启动/停止按钮显式控制服务生命周期。
+ * 启动时会探测端口：若已有同扩展的服务在运行，则提示用户并避免重复启动。
  */
 
 import * as vscode from 'vscode';
-import { startServer, stopServer, findAvailablePort } from './server';
+import * as http from 'http';
+import { startServer, stopServer, findAvailablePort, getActivePort, API_VERSION } from './server';
 import { StatusTreeProvider } from './views/StatusTreeProvider';
 import { runScenario, SCENARIOS } from './scenarios';
 import * as cfg from './config';
 
-/** 当前活跃端口（deactivate 时需要引用） */
+/** 当前活跃端口（由本窗口启动的服务器） */
 let _activePort = 0;
+/** 标记当前窗口是否为服务的实际提供者 */
+let _isLocalServer = false;
+
+/**
+ * 解析配置端口（开发模式下优先使用环境变量 COPILOT_API_PORT）
+ */
+function resolveConfiguredPort(context: vscode.ExtensionContext): number {
+  const cfgPort = cfg.getPort();
+  const envVal = process.env.COPILOT_API_PORT;
+  if (context.extensionMode === vscode.ExtensionMode.Development && envVal) {
+    const envPort = Number(envVal);
+    if (Number.isInteger(envPort) && envPort > 0 && envPort <= 65535) {
+      return envPort;
+    }
+  }
+  return cfgPort;
+}
+
+/**
+ * 探测指定端口是否已有 Copilot API 服务在运行
+ * @returns 如果是本扩展提供的服务，返回 true；否则返回 false
+ */
+function probeExistingService(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(
+      `http://127.0.0.1:${port}/v1/models`,
+      { timeout: 1500 },
+      (res) => {
+        const version = res.headers['x-copilot-api-version'];
+        resolve(version === API_VERSION);
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
 
 /**
  * 插件激活入口（onStartupFinished 触发）
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  // 解析配置端口：在开发模式下优先使用环境变量 COPILOT_API_PORT（便于 dev 与已安装版本隔离）
-  const resolveConfiguredPort = (): number => {
-    const cfgPort = cfg.getPort();
-    const envVal = process.env.COPILOT_API_PORT;
-    if (context.extensionMode === vscode.ExtensionMode.Development && envVal) {
-      const envPort = Number(envVal);
-      if (Number.isInteger(envPort) && envPort > 0 && envPort <= 65535) {
-        return envPort;
-      }
-    }
-    return cfgPort;
-  };
-
-  // 使用解析后的配置端口（开发模式下可能被 COPILOT_API_PORT 覆盖）
-  const port = resolveConfiguredPort();
+  const port = resolveConfiguredPort(context);
   // 实际使用的端口（端口冲突时自动递增，stop 命令通过闭包引用）
   let actualPort = port;
 
@@ -47,6 +77,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 初始化场景状态为 idle
   provider.resetScenarioStatuses();
 
+  // 初始化 TreeView 上下文变量（控制标题栏按钮显隐）
+  vscode.commands.executeCommand('setContext', 'copilotApi.localRunning', false);
+
+  // 激活时不自动启动服务器，但探测一次是否已有其他窗口在提供服务
+  const alreadyRunning = await probeExistingService(port);
+  if (alreadyRunning) {
+    provider.updateRemote(port);
+    vscode.window.showInformationMessage(
+      `检测到 Copilot API 服务已在端口 ${port} 运行（由其他 VS Code 窗口提供）`
+    );
+  } else {
+    provider.update(false, 0);
+  }
+
   // 辅助：从命令参数中解析模型 ID（接受 string 或 TreeItem）
   const resolveModelId = (arg: unknown): string | undefined => {
     if (typeof arg === 'string') return arg;
@@ -58,47 +102,50 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return undefined;
   };
 
-  try {
-    // 探测可用端口（端口冲突时自动递增）
-    actualPort = await findAvailablePort(port);
-    if (actualPort !== port) {
-      vscode.window.showInformationMessage(
-        `端口 ${port} 已被占用，Copilot API 服务已自动切换到端口 ${actualPort}`
-      );
-    }
-    await startServer(actualPort);
-    // 记录活跃端口（deactivate/stop 时需要用到）
-    _activePort = actualPort;
-    // 服务启动成功，更新 TreeView 状态
-    provider.update(true, actualPort);
-    vscode.window.showInformationMessage(
-      `Copilot API 服务器已启动，监听 127.0.0.1:${actualPort}`
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    vscode.window.showErrorMessage(`Copilot API 服务器启动失败：${message}`);
-  }
-
   // 注册启动命令
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.start', async () => {
-      // start 命令同样使用解析逻辑，开发模式下尊重 COPILOT_API_PORT
-      const cfg = resolveConfiguredPort();
+      // 若本窗口已在运行，直接返回
+      if (_isLocalServer && getActivePort() > 0) {
+        vscode.window.showInformationMessage(
+          `Copilot API 服务已由本窗口运行在 127.0.0.1:${getActivePort()}`
+        );
+        return;
+      }
+
+      const cfgPort = resolveConfiguredPort(context);
+
+      // 先探测目标端口是否已有同扩展服务
+      const occupiedByUs = await probeExistingService(cfgPort);
+      if (occupiedByUs) {
+        const choice = await vscode.window.showWarningMessage(
+          `端口 ${cfgPort} 已有 Copilot API 服务在运行（由其他 VS Code 窗口提供），是否仍要启动新服务？`,
+          { modal: false },
+          '仍要启动',
+          '取消'
+        );
+        if (choice !== '仍要启动') {
+          provider.updateRemote(cfgPort);
+          return;
+        }
+      }
+
       try {
         // 探测可用端口（端口冲突时自动递增）
-        const cfgActualPort = await findAvailablePort(cfg);
-        if (cfgActualPort !== cfg) {
+        const newPort = await findAvailablePort(cfgPort);
+        if (newPort !== cfgPort) {
           vscode.window.showInformationMessage(
-            `端口 ${cfg} 已被占用，Copilot API 服务已自动切换到端口 ${cfgActualPort}`
+            `端口 ${cfgPort} 已被占用，Copilot API 服务已自动切换到端口 ${newPort}`
           );
         }
-        await startServer(cfgActualPort);
-        // 更新闭包引用，确保 stop 命令使用最新端口
-        actualPort = cfgActualPort;
-        _activePort = cfgActualPort;
-        provider.update(true, cfgActualPort);
+        await startServer(newPort);
+        _activePort = newPort;
+        _isLocalServer = true;
+        actualPort = newPort;
+        vscode.commands.executeCommand('setContext', 'copilotApi.localRunning', true);
+        provider.update(true, newPort);
         vscode.window.showInformationMessage(
-          `Copilot API 服务器已启动，监听 127.0.0.1:${cfgActualPort}`
+          `Copilot API 服务器已启动，监听 127.0.0.1:${newPort}`
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -110,9 +157,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 注册停止命令
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.stop', async () => {
+      if (!_isLocalServer) {
+        // 若服务由其他窗口提供，仅重置本地状态提示
+        const p = provider.getRemotePort() || cfg.getPort();
+        provider.update(false, 0);
+        vscode.window.showInformationMessage(
+          `已断开对端口 ${p} 的关注（服务仍由其他窗口运行，可通过该窗口停止）`
+        );
+        return;
+      }
       _activePort = 0;
+      _isLocalServer = false;
       await stopServer();
-      provider.update(false, actualPort);
+      vscode.commands.executeCommand('setContext', 'copilotApi.localRunning', false);
+      provider.update(false, 0);
       vscode.window.showInformationMessage('Copilot API 服务器已停止');
     })
   );
@@ -123,10 +181,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       'copilotApi.runScenario',
       async (item: import('./views/StatusTreeProvider').StatusTreeItem) => {
         const scenarioId = item?.scenarioId ?? String(item);
-        // 使用服务实际监听端口（端口冲突时已自动递增）
+        // 使用当前实际端口：本窗口提供则取 activePort，否则取配置端口（或远程端口）
+        const currentPort = _isLocalServer ? getActivePort() : (provider.getRemotePort() || cfg.getPort());
         provider.setScenarioStatus(scenarioId, 'running');
         outputChannel.show(true);
-        const ok = await runScenario(scenarioId, actualPort, outputChannel);
+        const ok = await runScenario(scenarioId, currentPort, outputChannel);
         provider.setScenarioStatus(scenarioId, ok ? 'success' : 'failure');
       }
     )
@@ -135,12 +194,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 注册播放全部场景命令（顺序执行，更新 TreeView 状态）
   context.subscriptions.push(
     vscode.commands.registerCommand('copilotApi.runAllScenarios', async () => {
-      // 使用服务实际监听端口（端口冲突时已自动递增）
+      const currentPort = _isLocalServer ? getActivePort() : (provider.getRemotePort() || cfg.getPort());
       outputChannel.show(true);
       provider.resetScenarioStatuses();
       for (const s of SCENARIOS) {
         provider.setScenarioStatus(s.id, 'running');
-        const ok = await runScenario(s.id, actualPort, outputChannel);
+        const ok = await runScenario(s.id, currentPort, outputChannel);
         provider.setScenarioStatus(s.id, ok ? 'success' : 'failure');
         // 小间隔，视觉上更明显
         await new Promise((r) => setTimeout(r, 200));
@@ -261,6 +320,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
  * 插件停用时注销并停止服务器
  */
 export async function deactivate(): Promise<void> {
-  _activePort = 0;
-  await stopServer();
+  if (_isLocalServer) {
+    _activePort = 0;
+    _isLocalServer = false;
+    await stopServer();
+  }
 }
